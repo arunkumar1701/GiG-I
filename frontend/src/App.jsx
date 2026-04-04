@@ -9,8 +9,7 @@ import DevPanel from './components/DevPanel';
 import LandingPage from './components/landing/LandingPage';
 import AdminDashboard from './components/AdminDashboard'; // Import Admin Dashboard
 
-const API_BASE = "http://127.0.0.1:8000";
-
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [dashboard, setDashboard] = useState(null);
