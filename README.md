@@ -1,4 +1,4 @@
-# GiG-I: Parametric Insurance for the Gig Economy
+# GIG-I: Parametric Insurance for the Gig Economy
 **AI-Powered Income Protection with Adversarial Fraud Defense**
 
 ---
@@ -131,12 +131,53 @@ To ensure the **integrity** and **security** of the platform, GigShield AI imple
 *   **Rate Limiting & DDoS Protection:** Advanced rate limiting at the API Gateway prevents brute-force attacks on the payout trigger engine.
 
 ## 19. Architecture Overview
-Gig-I’s system architecture follows a modern event-driven design. Edge IoT devices (or mobile apps) continuously report local conditions to the cloud, alongside data from third-party APIs (weather, traffic, curfew alerts). Incoming events are funneled into our FastAPI backend running on cloud infrastructure (configurable to AWS, GCP, or Azure). Geofencing logic ensures we only process events relevant to the driver’s zone (e.g. Zone A).
+
+### High-Level System Architecture
+```mermaid
+graph TD
+    subgraph Edge
+        IoT[IoT / Mobile App]
+        Ext[3rd Party APIs]
+    end
+    
+    subgraph Cloud Infrastructure
+        API[FastAPI Backend]
+        DB[(Ledger DB)]
+        
+        subgraph Multi-Pass Fraud Engine
+            T1[Tier 1: Deterministic]
+            T2[Tier 2: Velocity]
+            T3[Tier 3: LLM Reasoning]
+        end
+    end
+    
+    subgraph Blockchain
+        SC[Smart Contract]
+    end
+    
+    subgraph Web
+        Dash[Worker Wallet UI]
+        Admin[Admin Dashboard]
+    end
+
+    IoT -->|Trigger Event| API
+    Ext -->|Context Data| API
+    API <--> T1
+    API <--> T2
+    API <--> T3
+    API <--> DB
+    API -->|Mint Token| SC
+    Dash <--> DB
+    Admin <--> DB
+    Dash -.-> SC
+```
+
+GIG-I’s system architecture follows a modern event-driven design. Edge IoT devices (or mobile apps) continuously report local conditions to the cloud, alongside data from third-party APIs (weather, traffic, curfew alerts). Incoming events are funneled into our FastAPI backend running on cloud infrastructure (configurable to AWS, GCP, or Azure). Geofencing logic ensures we only process events relevant to the driver’s zone (e.g. Zone A).
 
 Within the backend, each incoming event triggers our Multi-Pass Fraud Engine. This is implemented as an asynchronous pipeline: Tier-1 deterministic checks and Tier-2 historical checks run in parallel with Tier-3 AI validation. FastAPI’s async features (async/await) let our `/simulate-event` endpoint handle high throughput with minimal latency. Once all checks pass, the engine calls a blockchain smart contract to mint a payout token into the driver’s on-chain wallet. Token minting and ledger updates are immediately logged. The driver-facing dashboard reads their wallet balance and transaction history from our database (or directly from the blockchain), providing real-time UI updates. An admin interface overlays logs and metrics for monitoring.
 
 ### Data Flows and Pipelines
-Gig-I’s 3-tier validation pipeline:
+GIG-I’s 3-tier validation pipeline:
 
 ```mermaid
 flowchart TD
@@ -302,4 +343,4 @@ The system is cloud-agnostic. In production, each component can run in container
 *   **Zero Friction:** Autonomous workflow from trigger to payout.
 
 ## 22. Mission Statement
-> *“GiG-I transforms insurance from a reactive claims process into a real-time, AI-driven income protection system—secure against coordinated fraud and optimized for India’s gig workforce.”*
+> *“GIG-I transforms insurance from a reactive claims process into a real-time, AI-driven income protection system—secure against coordinated fraud and optimized for India’s gig workforce.”*
