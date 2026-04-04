@@ -130,7 +130,162 @@ To ensure the **integrity** and **security** of the platform, GigShield AI imple
 *   **End-to-End Encryption (E2EE):** Worker PII (Personally Identifiable Information) and UPI details are encrypted at rest using **AES-256-GCM**.
 *   **Rate Limiting & DDoS Protection:** Advanced rate limiting at the API Gateway prevents brute-force attacks on the payout trigger engine.
 
-## 19. Tech Stack
+## 19. Architecture Overview
+Gig-I’s system architecture follows a modern event-driven design. Edge IoT devices (or mobile apps) continuously report local conditions to the cloud, alongside data from third-party APIs (weather, traffic, curfew alerts). Incoming events are funneled into our FastAPI backend running on cloud infrastructure (configurable to AWS, GCP, or Azure). Geofencing logic ensures we only process events relevant to the driver’s zone (e.g. Zone A).
+
+Within the backend, each incoming event triggers our Multi-Pass Fraud Engine. This is implemented as an asynchronous pipeline: Tier-1 deterministic checks and Tier-2 historical checks run in parallel with Tier-3 AI validation. FastAPI’s async features (async/await) let our `/simulate-event` endpoint handle high throughput with minimal latency. Once all checks pass, the engine calls a blockchain smart contract to mint a payout token into the driver’s on-chain wallet. Token minting and ledger updates are immediately logged. The driver-facing dashboard reads their wallet balance and transaction history from our database (or directly from the blockchain), providing real-time UI updates. An admin interface overlays logs and metrics for monitoring.
+
+### Data Flows and Pipelines
+Gig-I’s 3-tier validation pipeline:
+
+```mermaid
+flowchart TD
+  A[Event Received at /simulate-event] --> B[Tier-1: Deterministic Checks]
+  B --> C[Tier-2: Velocity Checks]
+  C --> D[Tier-3: LLM Reasoning]
+  D --> E{Fraud Risk Scores OK?}
+  E -->|Yes| F[Mint Token on Blockchain]
+  E -->|No| G[Reject Claim]
+  F --> H[Log Payout & Update Wallet]
+  G --> I[Log Rejection]
+```
+
+### End-to-End Sequence Diagram
+```mermaid
+sequenceDiagram
+    participant IoT as IoT/Device
+    participant API as Third-Party API
+    participant Backend as Backend
+    participant T1 as Tier-1 Engine
+    participant T2 as Tier-2 Engine
+    participant LLM as LLM Agent
+    participant Chain as Blockchain
+    participant UI as Frontend/UI
+
+    IoT->>Backend: POST /simulate-event (payload)
+    API-->>Backend: Push event data (e.g. weather)
+    
+    Backend->>T1: Perform deterministic check
+    T1-->>Backend: pass/fail
+    
+    alt pass
+        Backend->>T2: Perform velocity check
+        T2-->>Backend: pass/fail
+        
+        alt pass
+            Backend->>LLM: Ask for contextual validation
+            LLM-->>Backend: pass/fail
+            
+            alt pass
+                Backend->>Chain: mintToken(driverId, amount)
+                Chain-->>Backend: txReceipt
+                Backend-->>IoT: {"status": "approved", "tokenId":1234}
+            else fail
+                Backend-->>IoT: {"status": "rejected"}
+            end
+        else fail
+            Backend-->>IoT: {"status": "rejected"}
+        end
+    else fail
+        Backend-->>IoT: {"status": "rejected"}
+    end
+```
+
+### Component Descriptions
+*   **FastAPI Backend (`/simulate-event`):** We use FastAPI – a modern, high-performance Python web framework – to receive and validate events. All API endpoints use Python type hints and Pydantic models for data validation.
+*   **Multi-Pass Fraud Engine:** This core logic is invoked by the backend for each event.
+    *   **Tier-1: Deterministic Checks.** Fast, rule-based logic verifies basic conditions.
+    *   **Tier-2: Velocity Checks.** Analyzes the driver’s recent claim history to prevent rapid-fire exploits.
+    *   **Tier-3: LLM Reasoning Agent.** The final arbiter is a Large Language Model-based analysis. We formulate a structured prompt incorporating event details and external context. We apply strict safety measures and red-teaming to avoid hallucinations.
+*   **Smart Contract & Token Minting:** We represent payouts as tokens on a configurable blockchain (e.g. ERC-20/721 on Ethereum/Polygon). Following best practices, the contract’s mint authority is tightly controlled (e.g. by multisig).
+*   **Data Storage & Ledger:** We maintain an immutable log of all events and payouts. 
+*   **Dashboards/UI:** The gig worker and admins use web dashboards to view status.
+
+### API Contracts
+We provide RESTful endpoints with JSON schemas.
+
+**POST `/simulate-event`** – Trigger an event.
+```json
+{
+  "driverId": 42,
+  "eventType": "HeavyRain",
+  "timestamp": "2026-04-04T18:30:00Z",
+  "location": {"lat": 19.0760, "lon": 72.8777},
+  "zone": "A"
+}
+```
+
+**Response JSON Example (approved claim):**
+```json
+{
+  "status": "approved",
+  "fraudRiskScore": 0.07,
+  "tokenId": 1234,
+  "message": "Payout minted successfully"
+}
+```
+
+**GET `/wallet/{driverId}`** – Get driver’s wallet balance and recent transactions.
+```json
+{
+  "driverId": 42,
+  "balanceTokens": 1500,
+  "transactions": [
+    {"tokenId": 1231, "type":"payout", "event":"LocalCurfew", "amount":300, "timestamp":"2026-04-04T08:15Z"},
+    {"tokenId": 1234, "type":"payout", "event":"HeavyRain", "amount":200, "timestamp":"2026-04-04T18:31Z"}
+  ]
+}
+```
+
+**GET `/ledger`** – Fetch the full immutable claims ledger (admin only).
+```json
+{
+  "entries": [
+    {"event":"Flood", "driverId":42, "time":"2026-04-04T18:31Z", "tokenId":1234, "FRS":0.07},
+    {"event":"Curfew", "driverId":42, "time":"2026-04-04T08:15Z", "tokenId":1231, "FRS":0.03}
+  ]
+}
+```
+
+### Deployment & Infrastructure
+The system is cloud-agnostic. In production, each component can run in containers (e.g. Docker, Kubernetes) on AWS/GCP/Azure.
+*   **Edge Devices:** IoT sensors or driver smartphones send data via MQTT/WebSockets or HTTP POST.
+*   **Geofencing:** Geospatial service enforces that events trigger claims only if the driver is in the affected area.
+*   **Async Pipelines:** FastAPI handles concurrency with Python `asyncio`.
+*   **Cloud Services:** Managed Kubernetes or serverless containers. Data is stored in Region-local PostgreSQL/Redis.
+*   **Blockchain:** EVM-compatible chain hosts the token contract. Oracles can supply truth if shifted entirely on-chain.
+
+### Security, Testing & Auditability
+*   **Authentication & Authorization:** All API endpoints are protected using OAuth2 or API keys. 
+*   **Immutability & Data Encryption:** Data in transit uses HTTPS/TLS. The use of blockchain ensures every payout is permanently recorded.
+*   **LLM Safety:** The Tier-3 agent is the only AI making subjective judgments, so we use sanitized inputs, limit outputs to structured yes/no, and perform adversarial testing.
+*   **Testing Strategy:** Unit tests via FastAPI `TestClient`, Integration tests via Mock Events, and Simulation testing via our 4-button Dev Panel.
+
+### Tables: Components & Data Schemas
+
+**Major Components:**
+
+| Component | Role/Description |
+| :--- | :--- |
+| **FastAPI Backend** | Receives events and orchestrates the payout process (async, Pydantic). |
+| **Fraud Engine (Tier 1)** | Applies deterministic business rules and threshold checks. |
+| **Fraud Engine (Tier 2)** | Velocity/historical checks against database records (e.g. recent claims count). |
+| **Fraud Engine (Tier 3)** | LLM-based contextual check; uses a secure AI service and vetted data. |
+| **Smart Contract** | Blockchain code handling token minting. Enforces authorization. |
+| **Database/Cache** | Stores policies, claim logs, and event data (e.g. PostgreSQL, Redis). |
+| **Web Dashboard** | UI for drivers/admins, showing policy, balance, and logs. |
+
+**Data Schema (example for `/simulate-event` request):**
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `driverId` | `integer` | Unique ID of the driver |
+| `eventType` | `string` | Trigger name (e.g. "HeavyRain") |
+| `timestamp` | `datetime` | ISO timestamp of the event |
+| `location` | `object` | `{lat: float, lon: float}` of event |
+| `zone` | `string` | Geofence label (e.g. "A") |
+
+## 20. Tech Stack
 *   **Frontend:** Next.js (Responsive Mobile-Web)
 *   **Backend:** Node.js + FastAPI (Python)
 *   **ML:** Scikit-learn, XGBoost, Prophet
@@ -139,12 +294,12 @@ To ensure the **integrity** and **security** of the platform, GigShield AI imple
 *   **APIs:** OpenWeatherMap, WAQI, TomTom Traffic
 *   **Payments:** Razorpay (Sandbox Simulation)
 
-## 20. System Advantages & Value Proposition
+## 21. System Advantages & Value Proposition
 *   **Reduces Basis Risk:** Triggers are strictly correlated to income loss.
 *   **India-Optimized:** Uses IMD standards and UPI-first design.
 *   **Network-Level Defense:** Detects organized fraud rings, not just individuals.
 *   **Robust Integrity:** Cybersecurity components ensure a tamper-proof claim pipeline.
 *   **Zero Friction:** Autonomous workflow from trigger to payout.
 
-## 21. Mission Statement
+## 22. Mission Statement
 > *“GiG-I transforms insurance from a reactive claims process into a real-time, AI-driven income protection system—secure against coordinated fraud and optimized for India’s gig workforce.”*
