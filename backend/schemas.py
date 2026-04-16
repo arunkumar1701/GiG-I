@@ -15,15 +15,24 @@ class UserCreate(BaseModel):
     platform:      str
     weekly_income: float
     vehicle_type:  Optional[str] = "Bike"
+    vehicle_number: Optional[str] = None
     plan_tier:     Optional[str] = "Standard"
     phone:         Optional[str] = None
     upi_id:        Optional[str] = None
+    bank_name:     Optional[str] = None
+    bank_account_number: Optional[str] = None
+    ifsc_code:     Optional[str] = None
+    emergency_contact: Optional[str] = None
 
 
 class UserResponse(UserCreate):
     id: int
     phone: Optional[str] = None
     upi_id: Optional[str] = None
+    bank_account_last4: Optional[str] = None
+    has_upi: bool = False
+    emergency_contact_masked: Optional[str] = None
+    shift_status: Optional[str] = "Offline"
     model_config = ConfigDict(from_attributes=True)
 
 

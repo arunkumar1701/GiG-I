@@ -207,6 +207,50 @@ def test_phone_otp_request_and_verify(monkeypatch, tmp_path):
     assert otp_verify.status_code == 200
     assert otp_verify.json()['verified'] is True
 
+    admin_otp = client.post('/api/v1/admin/send-otp', json={
+        'username': backend_security.ADMIN_USERNAME,
+        'password': backend_security.ADMIN_PASSWORD,
+    })
+    assert admin_otp.status_code == 200
+    admin_login = client.post('/api/v1/admin/verify-otp', json={
+        'username': backend_security.ADMIN_USERNAME,
+        'password': backend_security.ADMIN_PASSWORD,
+        'otp': admin_otp.json()['demoOtp'],
+    })
+    assert admin_login.status_code == 200
+    assert admin_login.json()['user_id'] == 0
+
+
+def test_worker_profile_update_stores_masked_payment_details(monkeypatch, tmp_path):
+    client, _ = _build_test_client(monkeypatch, tmp_path)
+
+    register = client.post('/register', json={
+        'name': 'Profile Worker',
+        'city': 'Chennai',
+        'zone': 'Zone A',
+        'platform': 'Zomato',
+        'weekly_income': 4100,
+        'phone': '6666666666',
+    })
+    assert register.status_code == 200
+    auth = register.json()
+    headers = {'Authorization': f'Bearer {auth["access_token"]}'}
+
+    update = client.put(f'/user/{auth["user_id"]}/profile', json={
+        'shift_status': 'Active',
+        'upi_id': 'profile@upi',
+        'bank_name': 'Demo Bank',
+        'bank_account_number': '123456789012',
+        'ifsc_code': 'DEMO0001234',
+        'emergency_contact': '9999999999',
+    }, headers=headers)
+    assert update.status_code == 200
+    payload = update.json()
+    assert payload['shift_status'] == 'Active'
+    assert payload['has_upi'] is True
+    assert payload['bank_account_last4'] == '9012'
+    assert payload['emergency_contact_masked'] == '******9999'
+
 
 def test_api_admin_review_approves_hold_claim(monkeypatch, tmp_path):
     monkeypatch.setattr(

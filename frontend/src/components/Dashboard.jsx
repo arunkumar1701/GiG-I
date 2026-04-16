@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Wallet,
 } from 'lucide-react';
+import TelematicsTracker from './TelematicsTracker';
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-IN', {
@@ -24,8 +25,10 @@ export default function Dashboard({
   setActiveTab,
   apiBase,
   authToken,
+  currentUserId,
 }) {
   const [weatherByZone, setWeatherByZone] = useState(null);
+  const [shiftStatus, setShiftStatus] = useState(user?.shift_status || 'Offline');
 
   useEffect(() => {
     const fetchWeather = async () => {
@@ -47,9 +50,22 @@ export default function Dashboard({
 
   if (!user) return null;
 
-  const latestClaim = claims.length ? claims[claims.length - 1] : null;
-  const latestRiskScore = Number(latestClaim?.frs3 || 0);
   const zoneWeather = weatherByZone?.[user.zone];
+  const approvedClaims = claims.filter((claim) => claim.status === 'Approved');
+
+  const handleShiftChange = async (nextStatus) => {
+    setShiftStatus(nextStatus);
+    if (!currentUserId) return;
+    try {
+      await axios.put(
+        `${apiBase}/user/${currentUserId}/profile`,
+        { shift_status: nextStatus },
+        authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : undefined,
+      );
+    } catch (error) {
+      console.error('Shift status update failed:', error);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -57,7 +73,7 @@ export default function Dashboard({
         <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[#26457d]">Today&apos;s view</p>
         <h2 className="mt-2 text-4xl font-bold text-slate-900">Good afternoon, {user.full_name?.split(' ')[0]}</h2>
         <p className="mt-2 text-sm font-medium text-slate-500">
-          Check your zone risk, recent payouts, and whether this week&apos;s protection is active.
+          Go online, follow zone conditions, and track payouts without insurance jargon.
         </p>
       </div>
 
@@ -81,15 +97,21 @@ export default function Dashboard({
 
         <div className="mt-5 grid grid-cols-2 gap-3">
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Risk score</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">{Math.round(latestRiskScore * 100)}%</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Shift status</p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">{shiftStatus}</p>
           </div>
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Weekly income</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">{formatCurrency(user.weekly_income)}</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Paid claims</p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">{approvedClaims.length}</p>
           </div>
         </div>
       </div>
+
+      <TelematicsTracker
+        user={{ ...user, shift_status: shiftStatus }}
+        activePolicy={activePolicy}
+        onShiftChange={handleShiftChange}
+      />
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-[24px] border border-[#eadfcd] bg-white p-4 shadow-sm">
@@ -128,7 +150,7 @@ export default function Dashboard({
               </div>
               <div>
                 <p className="font-bold text-slate-900">Review your policy</p>
-                <p className="text-sm text-slate-500">Coverage, premium, and signal breakdown</p>
+                <p className="text-sm text-slate-500">Coverage, premium, and claim status</p>
               </div>
             </div>
           </button>
@@ -164,7 +186,7 @@ export default function Dashboard({
         <div className="rounded-[26px] border border-[#eadfcd] bg-white p-2 shadow-sm">
           {claims.length === 0 ? (
             <div className="rounded-[22px] bg-[#fff8ef] p-5 text-sm text-slate-500">
-              No claim events yet. Run a replay to show wallet updates and fraud scoring.
+              No claim events yet. Run a replay to show wallet updates and payout tracking.
             </div>
           ) : (
             <div className="space-y-2">

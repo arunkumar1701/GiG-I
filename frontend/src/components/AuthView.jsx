@@ -18,9 +18,16 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
   const [platform, setPlatform] = useState('Zomato');
   const [weeklyIncome, setWeeklyIncome] = useState(3000);
   const [vehicleType, setVehicleType] = useState('Bike');
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [upiId, setUpiId] = useState('');
+  const [bankName, setBankName] = useState('');
+  const [bankAccountNumber, setBankAccountNumber] = useState('');
+  const [ifscCode, setIfscCode] = useState('');
+  const [emergencyContact, setEmergencyContact] = useState('');
   const [adminUsername, setAdminUsername] = useState('gigadmin');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminOtp, setAdminOtp] = useState('');
+  const [adminOtpMeta, setAdminOtpMeta] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [otpMeta, setOtpMeta] = useState(null);
@@ -45,7 +52,7 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
     setIsLoading(true);
     setErrorMessage('');
     try {
-      const response = await axios.post(`${API_BASE}/auth/otp/request`, { phone: normalized });
+      const response = await axios.post(`${API_BASE}/api/v1/auth/send-otp`, { phone: normalized });
       setMobileNumber(normalized);
       setOtpMeta(response.data);
       setStep('otp');
@@ -61,7 +68,7 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
     setIsLoading(true);
     setErrorMessage('');
     try {
-      await axios.post(`${API_BASE}/auth/otp/verify`, {
+      await axios.post(`${API_BASE}/api/v1/auth/verify-otp`, {
         phone: normalizePhone(mobileNumber),
         otp: otp.trim(),
       });
@@ -101,7 +108,13 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
         platform,
         weekly_income: parseFloat(weeklyIncome) || 3000,
         vehicle_type: vehicleType,
+        vehicle_number: vehicleNumber,
         phone: normalizePhone(mobileNumber),
+        upi_id: upiId,
+        bank_name: bankName,
+        bank_account_number: bankAccountNumber,
+        ifsc_code: ifscCode,
+        emergency_contact: emergencyContact,
       });
 
       onLoginSuccess({
@@ -119,11 +132,28 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
     }
   };
 
+  const handleAdminSendOtp = async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+    try {
+      const response = await axios.post(`${API_BASE}/api/v1/admin/send-otp`, {
+        username: adminUsername,
+        password: adminPassword,
+      });
+      setAdminOtpMeta(response.data);
+    } catch (error) {
+      console.error(error);
+      setErrorMessage(error.response?.data?.detail || 'Unable to send admin OTP.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleAdminLogin = async () => {
     setIsLoading(true);
     setErrorMessage('');
     try {
-      const res = await axios.post(`${API_BASE}/admin/login`, {
+      const res = await axios.post(`${API_BASE}/api/v1/admin/verify-otp`, {
         username: adminUsername,
         password: adminPassword,
         otp: adminOtp,
@@ -137,7 +167,7 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
       });
     } catch (error) {
       console.error(error);
-      setErrorMessage('Admin login failed. Check username, password, and MFA code.');
+      setErrorMessage(error.response?.data?.detail || 'Admin login failed. Check credentials and OTP.');
     } finally {
       setIsLoading(false);
     }
@@ -276,6 +306,32 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
             <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Weekly income</label>
             <input value={weeklyIncome} onChange={(event) => setWeeklyIncome(event.target.value)} type="number" className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" placeholder="3000" />
           </div>
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Vehicle number</label>
+            <input value={vehicleNumber} onChange={(event) => setVehicleNumber(event.target.value.toUpperCase())} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" placeholder="TN 09 AB 1234" />
+          </div>
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">UPI ID</label>
+            <input value={upiId} onChange={(event) => setUpiId(event.target.value)} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" placeholder="ravi@upi" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Bank</label>
+              <input value={bankName} onChange={(event) => setBankName(event.target.value)} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" placeholder="HDFC" />
+            </div>
+            <div>
+              <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">IFSC</label>
+              <input value={ifscCode} onChange={(event) => setIfscCode(event.target.value.toUpperCase())} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" placeholder="HDFC0001234" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Bank account number</label>
+            <input value={bankAccountNumber} onChange={(event) => setBankAccountNumber(event.target.value.replace(/\D/g, ''))} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" placeholder="Only last four are shown later" />
+          </div>
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Emergency contact</label>
+            <input value={emergencyContact} onChange={(event) => setEmergencyContact(normalizePhone(event.target.value))} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" placeholder="Family phone number" />
+          </div>
           <button
             disabled={isLoading}
             onClick={handleRegister}
@@ -327,7 +383,7 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#26457d]">Admin access</p>
                 <h2 className="mt-2 text-5xl font-bold text-slate-900">Underwriter login</h2>
-                <p className="mt-2 text-sm font-medium text-slate-500">Enter credentials and MFA to review held claims.</p>
+                <p className="mt-2 text-sm font-medium text-slate-500">Enter credentials, request an admin OTP, then review held claims.</p>
                 <div className="mt-8 space-y-4">
                   <div>
                     <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Username</label>
@@ -338,11 +394,23 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
                     <input type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" />
                   </div>
                   <div>
-                    <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">MFA code</label>
-                    <input value={adminOtp} onChange={(event) => setAdminOtp(event.target.value)} placeholder="6-digit TOTP" className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" />
+                    <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Admin OTP</label>
+                    <input value={adminOtp} onChange={(event) => setAdminOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit OTP" className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm" />
+                    {adminOtpMeta?.demoOtp ? (
+                      <p className="mt-2 rounded-xl bg-[#f3ecdf] px-3 py-2 text-xs font-bold text-[#26457d]">
+                        Demo admin OTP: {adminOtpMeta.demoOtp}
+                      </p>
+                    ) : null}
                   </div>
                   <button
                     disabled={isLoading}
+                    onClick={handleAdminSendOtp}
+                    className="flex w-full items-center justify-center gap-2 rounded-[22px] border border-[#d8cab7] bg-white px-4 py-4 text-sm font-bold text-slate-700 transition hover:bg-[#faf4ea] disabled:opacity-60"
+                  >
+                    {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Send admin OTP'}
+                  </button>
+                  <button
+                    disabled={isLoading || !adminOtpMeta}
                     onClick={handleAdminLogin}
                     className="flex w-full items-center justify-center gap-2 rounded-[22px] bg-[#26457d] px-4 py-4 text-sm font-extrabold text-white transition hover:bg-[#1f3967] disabled:opacity-60"
                   >

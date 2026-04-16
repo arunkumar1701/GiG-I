@@ -19,12 +19,23 @@ class User(Base):
     platform       = Column(String)
     weekly_income  = Column(Float)
     vehicle_type   = Column(String, default="Bike")
+    vehicle_number = Column(String, nullable=True)
     plan_tier      = Column(String, default="Standard")   # Basic / Standard / Premium
+    shift_status   = Column(String, default="Offline")
     phone          = Column(String, nullable=True)
     phone_hash     = Column(String, nullable=True, index=True)
     phone_encrypted = Column(String, nullable=True)
     upi_hash       = Column(String, nullable=True, index=True)
     upi_encrypted  = Column(String, nullable=True)
+    bank_name      = Column(String, nullable=True)
+    bank_account_last4 = Column(String, nullable=True)
+    bank_account_hash = Column(String, nullable=True, index=True)
+    bank_account_encrypted = Column(String, nullable=True)
+    ifsc_hash      = Column(String, nullable=True)
+    ifsc_encrypted = Column(String, nullable=True)
+    emergency_contact = Column(String, nullable=True)
+    emergency_contact_hash = Column(String, nullable=True)
+    emergency_contact_encrypted = Column(String, nullable=True)
 
     policies = relationship("Policy", back_populates="user")
 

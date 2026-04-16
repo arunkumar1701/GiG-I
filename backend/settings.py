@@ -57,6 +57,16 @@ class Settings:
     razorpay_key_id: str
     razorpay_key_secret: str
     redis_url: str
+    otp_provider: str
+    otp_demo_mode: bool
+    otp_ttl_seconds: int
+    fast2sms_api_key: str
+    fast2sms_sender_id: str
+    fast2sms_template_id: str
+    twilio_account_sid: str
+    twilio_auth_token: str
+    twilio_verify_service_sid: str
+    admin_phone_number: str
     enable_web3_payout: bool
     web3_rpc_url: str
     web3_chain_id: int
@@ -115,6 +125,16 @@ class Settings:
             razorpay_key_id=with_mode_default("RAZORPAY_KEY_ID", ""),
             razorpay_key_secret=with_mode_default("RAZORPAY_KEY_SECRET", ""),
             redis_url=with_mode_default("REDIS_URL", ""),
+            otp_provider=(_env("OTP_PROVIDER", "demo") or "demo").lower(),
+            otp_demo_mode=_bool_env("OTP_DEMO_MODE", not is_production),
+            otp_ttl_seconds=int(_env("OTP_TTL_SECONDS", "300") or "300"),
+            fast2sms_api_key=with_mode_default("FAST2SMS_API_KEY", ""),
+            fast2sms_sender_id=with_mode_default("FAST2SMS_SENDER_ID", ""),
+            fast2sms_template_id=with_mode_default("FAST2SMS_TEMPLATE_ID", ""),
+            twilio_account_sid=with_mode_default("TWILIO_ACCOUNT_SID", ""),
+            twilio_auth_token=with_mode_default("TWILIO_AUTH_TOKEN", ""),
+            twilio_verify_service_sid=with_mode_default("TWILIO_VERIFY_SERVICE_SID", ""),
+            admin_phone_number=with_mode_default("ADMIN_PHONE_NUMBER", ""),
             enable_web3_payout=_bool_env("ENABLE_WEB3_PAYOUT", is_production),
             web3_rpc_url=with_mode_default("WEB3_RPC_URL", ""),
             web3_chain_id=int(_env("WEB3_CHAIN_ID", "80002") or "80002"),
@@ -153,6 +173,28 @@ class Settings:
             "RAZORPAY_KEY_SECRET": self.razorpay_key_secret,
             "REDIS_URL": self.redis_url,
         }
+        if self.otp_provider == "demo":
+            raise RuntimeError("OTP_PROVIDER cannot be demo in production")
+        if self.otp_provider == "fast2sms":
+            required.update(
+                {
+                    "FAST2SMS_API_KEY": self.fast2sms_api_key,
+                    "FAST2SMS_SENDER_ID": self.fast2sms_sender_id,
+                    "FAST2SMS_TEMPLATE_ID": self.fast2sms_template_id,
+                    "ADMIN_PHONE_NUMBER": self.admin_phone_number,
+                }
+            )
+        elif self.otp_provider == "twilio":
+            required.update(
+                {
+                    "TWILIO_ACCOUNT_SID": self.twilio_account_sid,
+                    "TWILIO_AUTH_TOKEN": self.twilio_auth_token,
+                    "TWILIO_VERIFY_SERVICE_SID": self.twilio_verify_service_sid,
+                    "ADMIN_PHONE_NUMBER": self.admin_phone_number,
+                }
+            )
+        elif self.otp_provider != "demo":
+            raise RuntimeError("OTP_PROVIDER must be one of: demo, fast2sms, twilio")
         if self.enable_web3_payout:
             required.update(
                 {
@@ -195,6 +237,13 @@ class Settings:
             "RAZORPAY_KEY_ID": self.razorpay_key_id.strip().lower(),
             "RAZORPAY_KEY_SECRET": self.razorpay_key_secret.strip().lower(),
             "DATA_ENCRYPTION_KEY": self.data_encryption_key.strip().lower(),
+            "FAST2SMS_API_KEY": self.fast2sms_api_key.strip().lower(),
+            "FAST2SMS_SENDER_ID": self.fast2sms_sender_id.strip().lower(),
+            "FAST2SMS_TEMPLATE_ID": self.fast2sms_template_id.strip().lower(),
+            "TWILIO_ACCOUNT_SID": self.twilio_account_sid.strip().lower(),
+            "TWILIO_AUTH_TOKEN": self.twilio_auth_token.strip().lower(),
+            "TWILIO_VERIFY_SERVICE_SID": self.twilio_verify_service_sid.strip().lower(),
+            "ADMIN_PHONE_NUMBER": self.admin_phone_number.strip().lower(),
             "PRIVATE_KEY": self.web3_private_key.strip().lower(),
             "GIGSHIELD_TOKEN_ADDRESS": self.web3_token_contract.strip().lower(),
             "WEB3_RPC_URL": self.web3_rpc_url.strip().lower(),
@@ -203,6 +252,16 @@ class Settings:
             normalized_values.pop("PRIVATE_KEY", None)
             normalized_values.pop("GIGSHIELD_TOKEN_ADDRESS", None)
             normalized_values.pop("WEB3_RPC_URL", None)
+        if self.otp_provider != "fast2sms":
+            normalized_values.pop("FAST2SMS_API_KEY", None)
+            normalized_values.pop("FAST2SMS_SENDER_ID", None)
+            normalized_values.pop("FAST2SMS_TEMPLATE_ID", None)
+        if self.otp_provider != "twilio":
+            normalized_values.pop("TWILIO_ACCOUNT_SID", None)
+            normalized_values.pop("TWILIO_AUTH_TOKEN", None)
+            normalized_values.pop("TWILIO_VERIFY_SERVICE_SID", None)
+        if self.otp_provider == "demo":
+            normalized_values.pop("ADMIN_PHONE_NUMBER", None)
         weak = [
             name for name, value in normalized_values.items()
             if value in insecure_defaults.get(name, set())

@@ -9,6 +9,7 @@ import DevPanel from './components/DevPanel';
 import LandingPage from './components/landing/LandingPage';
 import AdminDashboard from './components/AdminDashboard';
 import Simulator from './components/Simulator';
+import ProfileView from './components/ProfileView';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 const AUTH_STORAGE_KEY = 'gig-i-auth';
@@ -263,6 +264,7 @@ export default function App() {
             setActiveTab={setActiveTab}
             apiBase={API_BASE}
             authToken={token}
+            currentUserId={currentUserId}
           />
         )}
         {activeTab === 'policy' && (
@@ -298,52 +300,14 @@ export default function App() {
           />
         )}
         {activeTab === 'profile' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-4xl font-bold text-slate-900">Worker Profile</h2>
-              <button
-                onClick={clearAuth}
-                className="rounded-2xl border border-[#dccfc0] bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-[#faf4ea]"
-              >
-                Logout Session
-              </button>
-            </div>
-
-            <div className="rounded-[30px] border border-[#e8dfd0] bg-[#fffaf4] p-6 shadow-[0_16px_40px_rgba(73,58,32,0.10)]">
-              <div className="flex items-start gap-5">
-                <img
-                  src={`https://ui-avatars.com/api/?name=${dashboard.user_meta.full_name}&background=eff6ff&color=1d4ed8&size=128`}
-                  alt="Avatar"
-                  className="h-20 w-20 rounded-full border-4 border-white shadow-sm"
-                />
-                <div>
-                  <h3 className="text-2xl font-bold text-slate-900">{dashboard.user_meta.full_name}</h3>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <p className="rounded-xl border border-[#d7d0c7] bg-white px-3 py-1.5 text-xs font-bold uppercase text-slate-700">
-                      {dashboard.user_meta.zone}
-                    </p>
-                    <p className="rounded-xl border border-[#d7d0c7] bg-white px-3 py-1.5 text-xs font-bold uppercase text-slate-700">
-                      {dashboard.user_meta.platform}
-                    </p>
-                    <p className="rounded-xl border border-[#d7d0c7] bg-white px-3 py-1.5 text-xs font-bold uppercase text-slate-700">
-                      {dashboard.user_meta.vehicle_type}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-3">
-                <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Phone</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-800">{dashboard.user_meta.phone || 'Not shared'}</p>
-                </div>
-                <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Weekly Earnings</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-800">INR {dashboard.user_meta.weekly_income}</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ProfileView
+            user={dashboard.user_meta}
+            apiBase={API_BASE}
+            authToken={token}
+            currentUserId={currentUserId}
+            onLogout={clearAuth}
+            onSaved={pollDashboard}
+          />
         )}
       </AppLayout>
 

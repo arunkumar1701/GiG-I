@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { CloudRain, Loader2, ShieldCheck, ThermometerSun } from 'lucide-react';
+import { CheckCircle2, CloudRain, Loader2, ShieldCheck, ThermometerSun } from 'lucide-react';
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-IN', {
@@ -62,16 +62,9 @@ export default function PolicyView({
     fetchDetail();
   }, [apiBase, authToken, selectedPolicyId]);
 
-  const signalRows = useMemo(() => {
-    const signals = policyDetail?.latestFraudSignals || {};
-    return [
-      ['Event', Number(signals.event || 0)],
-      ['Location', Number(signals.location || 0)],
-      ['Device', Number(signals.device || 0)],
-      ['Behavior', Number(signals.behavior || 0)],
-      ['Network', Number(signals.network || 0)],
-    ];
-  }, [policyDetail]);
+  const latestClaim = policyDetail?.claims?.[0] || null;
+  const claimStage = latestClaim?.status === 'Approved' ? 4 : latestClaim?.status === 'Hold' ? 2 : latestClaim ? 1 : 0;
+  const claimSteps = ['Claim initiated', 'Checking route', 'Approved', 'Payout sent'];
 
   if (!activePolicy && !loadingPolicies && policies.length === 0) {
     return (
@@ -187,27 +180,39 @@ export default function PolicyView({
         </div>
       </div>
 
-      <div className="rounded-[28px] border border-[#eadfcd] bg-white p-5 shadow-sm">
+      <div className="rounded-[28px] bg-tata-bg p-5 shadow-neumorph-outer">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-3xl font-bold text-slate-900">Fraud signal view</h3>
+          <h3 className="text-3xl font-bold text-slate-900">Claim tracking</h3>
           <ShieldCheck className="h-5 w-5 text-[#26457d]" />
         </div>
-        <div className="space-y-3">
-          {signalRows.map(([label, value]) => (
-            <div key={label}>
-              <div className="mb-1 flex justify-between text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                <span>{label}</span>
-                <span>{Math.round(value * 100)}%</span>
-              </div>
-              <div className="h-2 rounded-full bg-[#efe4d4]">
-                <div
-                  className={`h-2 rounded-full ${value >= 0.75 ? 'bg-rose-400' : value >= 0.45 ? 'bg-amber-400' : 'bg-emerald-500'}`}
-                  style={{ width: `${Math.max(value * 100, 6)}%` }}
-                />
-              </div>
+        {latestClaim ? (
+          <div>
+            <div className="relative mb-6 mt-3 h-2 rounded-full bg-[#e7dccb]">
+              <div
+                className="h-2 rounded-full bg-[#26457d] transition-all duration-500"
+                style={{ width: `${Math.max((claimStage / 4) * 100, 8)}%` }}
+              />
             </div>
-          ))}
-        </div>
+            <div className="grid grid-cols-4 gap-2">
+              {claimSteps.map((step, index) => (
+                <div key={step} className="text-center">
+                  <div className={`mx-auto flex h-8 w-8 items-center justify-center rounded-full ${claimStage >= index + 1 ? 'bg-[#26457d] text-white' : 'bg-white text-slate-400'}`}>
+                    <CheckCircle2 className="h-4 w-4" />
+                  </div>
+                  <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{step}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 rounded-[22px] bg-white p-4">
+              <p className="text-sm font-bold text-slate-900">{latestClaim.trigger_type}</p>
+              <p className="mt-1 text-sm text-slate-500">{latestClaim.status} • {new Date(latestClaim.timestamp).toLocaleString()}</p>
+            </div>
+          </div>
+        ) : (
+          <p className="rounded-[22px] bg-white p-4 text-sm text-slate-500">
+            No claim is active right now. If a disruption hits your shift, claim tracking appears here automatically.
+          </p>
+        )}
       </div>
     </div>
   );

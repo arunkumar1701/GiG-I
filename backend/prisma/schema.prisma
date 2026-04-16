@@ -15,12 +15,23 @@ model Driver {
   platform            String
   weeklyIncome        Float
   vehicleType         String              @default("Bike")
+  vehicleNumber       String?
   planTier            String              @default("Standard")
+  shiftStatus         String              @default("Offline")
   phoneMasked         String?
   phoneHash           String?             @unique
   phoneEncrypted      String?
   upiHash             String?
   upiEncrypted        String?
+  bankName            String?
+  bankAccountLast4    String?
+  bankAccountHash     String?
+  bankAccountEncrypted String?
+  ifscHash            String?
+  ifscEncrypted       String?
+  emergencyContactMasked String?
+  emergencyContactHash String?
+  emergencyContactEncrypted String?
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
   policies            Policy[]

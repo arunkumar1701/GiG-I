@@ -9,8 +9,8 @@ import asyncio
 import json
 import logging
 import datetime
+import hmac
 import math
-import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -34,6 +34,7 @@ from ai_engine import calculate_premium, evaluate_fraud_multipass
 from weather_service import get_weather, ZONE_COORDS
 from payout_service import initiate_payout
 from metrics_service import record_claim_metrics
+from otp_service import otp_service
 from prisma_client import (
     connect_prisma,
     disconnect_prisma,
@@ -80,6 +81,10 @@ def _ensure_runtime_schema() -> None:
             user_columns = {column["name"] for column in inspector.get_columns("users")}
             if "vehicle_type" not in user_columns:
                 conn.execute(text("ALTER TABLE users ADD COLUMN vehicle_type VARCHAR"))
+            if "vehicle_number" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN vehicle_number VARCHAR"))
+            if "shift_status" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN shift_status VARCHAR"))
             if "phone_hash" not in user_columns:
                 conn.execute(text("ALTER TABLE users ADD COLUMN phone_hash VARCHAR"))
             if "phone_encrypted" not in user_columns:
@@ -88,6 +93,24 @@ def _ensure_runtime_schema() -> None:
                 conn.execute(text("ALTER TABLE users ADD COLUMN upi_hash VARCHAR"))
             if "upi_encrypted" not in user_columns:
                 conn.execute(text("ALTER TABLE users ADD COLUMN upi_encrypted VARCHAR"))
+            if "bank_name" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN bank_name VARCHAR"))
+            if "bank_account_last4" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN bank_account_last4 VARCHAR"))
+            if "bank_account_hash" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN bank_account_hash VARCHAR"))
+            if "bank_account_encrypted" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN bank_account_encrypted VARCHAR"))
+            if "ifsc_hash" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN ifsc_hash VARCHAR"))
+            if "ifsc_encrypted" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN ifsc_encrypted VARCHAR"))
+            if "emergency_contact" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN emergency_contact VARCHAR"))
+            if "emergency_contact_hash" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN emergency_contact_hash VARCHAR"))
+            if "emergency_contact_encrypted" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN emergency_contact_encrypted VARCHAR"))
 
         if "claims" in inspector.get_table_names():
             existing_columns = {column["name"] for column in inspector.get_columns("claims")}
@@ -123,7 +146,6 @@ CORS_ALLOW_ORIGINS = settings.cors_allow_origins
 ALLOWED_HOSTS = settings.allowed_hosts
 APP_ENV = settings.app_env
 OTP_CODE_TTL_SECONDS = 300
-otp_store: dict[str, dict[str, float | str]] = {}
 
 
 def _serialize_sensor_payload(
@@ -179,9 +201,18 @@ def _serialize_user(user: models.User) -> schemas.UserResponse:
         platform=user.platform,
         weekly_income=user.weekly_income,
         vehicle_type=getattr(user, "vehicle_type", "Bike"),
+        vehicle_number=getattr(user, "vehicle_number", None),
         plan_tier=getattr(user, "plan_tier", "Standard"),
         phone=user.phone,
         upi_id=None,
+        bank_name=getattr(user, "bank_name", None),
+        bank_account_number=None,
+        ifsc_code=None,
+        emergency_contact=None,
+        bank_account_last4=getattr(user, "bank_account_last4", None),
+        has_upi=bool(getattr(user, "upi_hash", None)),
+        emergency_contact_masked=getattr(user, "emergency_contact", None),
+        shift_status=getattr(user, "shift_status", "Offline") or "Offline",
     )
 
 
@@ -588,6 +619,30 @@ class OtpVerifyRequest(BaseModel):
     otp: str
 
 
+class AdminOtpRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminOtpVerifyRequest(AdminOtpRequest):
+    otp: str
+
+
+class UserProfileUpdate(BaseModel):
+    city: Optional[str] = None
+    zone: Optional[str] = None
+    platform: Optional[str] = None
+    weekly_income: Optional[float] = None
+    vehicle_type: Optional[str] = None
+    vehicle_number: Optional[str] = None
+    upi_id: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account_number: Optional[str] = None
+    ifsc_code: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    shift_status: Optional[str] = None
+
+
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
@@ -598,63 +653,117 @@ class AdminLoginRequest(BaseModel):
     otp: str
 
 
-def _clean_expired_otp_codes() -> None:
-    now = time.time()
-    expired = [key for key, payload in otp_store.items() if payload["expires_at"] <= now]
-    for key in expired:
-        otp_store.pop(key, None)
+@app.post("/auth/otp/request")
+@app.post("/api/v1/auth/send-otp")
+async def request_phone_otp(req: OtpRequest):
+    try:
+        result = await otp_service.send_otp(req.phone, purpose="worker")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Worker OTP dispatch failed")
+        raise HTTPException(status_code=502, detail="OTP gateway unavailable") from exc
 
-
-def _issue_phone_otp(phone: str) -> dict[str, Any]:
-    normalized_phone = "".join(ch for ch in phone if ch.isdigit())
-    if len(normalized_phone) != 10:
-        raise HTTPException(status_code=400, detail="Enter a valid 10-digit phone number")
-
-    _clean_expired_otp_codes()
-    otp_code = f"{secrets.randbelow(900000) + 100000}"
-    phone_hash = hash_identifier(normalized_phone)
-    otp_store[phone_hash] = {
-        "otp": otp_code,
-        "expires_at": time.time() + OTP_CODE_TTL_SECONDS,
-    }
     payload = {
-        "phoneMasked": mask_phone(normalized_phone),
-        "expiresInSeconds": OTP_CODE_TTL_SECONDS,
-        "message": "OTP generated for demo login",
+        "phoneMasked": result.phone_masked,
+        "expiresInSeconds": result.expires_in_seconds,
+        "provider": result.provider,
+        "message": "OTP sent",
     }
-    if APP_ENV != "production":
-        payload["demoOtp"] = otp_code
+    if result.demo_otp:
+        payload["demoOtp"] = result.demo_otp
     return payload
 
 
-def _verify_phone_otp(phone: str, otp_code: str) -> dict[str, Any]:
-    normalized_phone = "".join(ch for ch in phone if ch.isdigit())
-    if len(normalized_phone) != 10:
-        raise HTTPException(status_code=400, detail="Enter a valid 10-digit phone number")
-
-    _clean_expired_otp_codes()
-    phone_hash = hash_identifier(normalized_phone)
-    record = otp_store.get(phone_hash)
-    if not record:
-        raise HTTPException(status_code=404, detail="OTP not found or expired")
-    if str(record["otp"]) != str(otp_code).strip():
-        raise HTTPException(status_code=401, detail="Invalid OTP code")
-
-    otp_store.pop(phone_hash, None)
-    return {
-        "verified": True,
-        "phoneMasked": mask_phone(normalized_phone),
-    }
-
-
-@app.post("/auth/otp/request")
-def request_phone_otp(req: OtpRequest):
-    return _issue_phone_otp(req.phone)
-
-
 @app.post("/auth/otp/verify")
-def verify_phone_otp(req: OtpVerifyRequest):
-    return _verify_phone_otp(req.phone, req.otp)
+@app.post("/api/v1/auth/verify-otp")
+async def verify_phone_otp(req: OtpVerifyRequest):
+    try:
+        result = await otp_service.verify_otp(req.phone, req.otp, purpose="worker")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Worker OTP verification failed")
+        raise HTTPException(status_code=502, detail="OTP gateway unavailable") from exc
+    if not result["verified"]:
+        raise HTTPException(status_code=401, detail="Invalid or expired OTP")
+    return result
+
+
+def _verify_admin_password_only(username: str, password: str) -> None:
+    if not hmac.compare_digest(username, settings.admin_username):
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+    if not hmac.compare_digest(password, settings.admin_password):
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+
+
+@app.post("/api/v1/admin/send-otp")
+async def request_admin_otp(req: AdminOtpRequest):
+    _verify_admin_password_only(req.username, req.password)
+    admin_phone = settings.admin_phone_number or ("9999999999" if APP_ENV != "production" else "")
+    if not admin_phone:
+        raise HTTPException(status_code=500, detail="ADMIN_PHONE_NUMBER is not configured")
+
+    try:
+        result = await otp_service.send_otp(admin_phone, purpose="admin")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Admin OTP dispatch failed")
+        raise HTTPException(status_code=502, detail="OTP gateway unavailable") from exc
+
+    payload = {
+        "phoneMasked": result.phone_masked,
+        "expiresInSeconds": result.expires_in_seconds,
+        "provider": result.provider,
+        "message": "Admin OTP sent",
+    }
+    if result.demo_otp:
+        payload["demoOtp"] = result.demo_otp
+    return payload
+
+
+@app.post("/api/v1/admin/verify-otp", response_model=schemas.AuthResponse)
+async def verify_admin_otp(req: AdminOtpVerifyRequest, db: Session = Depends(get_db)):
+    _verify_admin_password_only(req.username, req.password)
+    admin_phone = settings.admin_phone_number or ("9999999999" if APP_ENV != "production" else "")
+    try:
+        result = await otp_service.verify_otp(admin_phone, req.otp, purpose="admin")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Admin OTP verification failed")
+        raise HTTPException(status_code=502, detail="OTP gateway unavailable") from exc
+    if not result["verified"]:
+        raise HTTPException(status_code=401, detail="Invalid or expired admin OTP")
+
+    tokens = create_token_pair(0, role="admin")
+    _log_audit(
+        db,
+        actor_role="admin",
+        actor_id=req.username,
+        action="admin_sms_otp_login",
+        target_type="system",
+        target_id="admin",
+    )
+    db.commit()
+    return schemas.AuthResponse(
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        user_id=0,
+        user=schemas.UserResponse(
+            id=0,
+            name="Admin",
+            city="N/A",
+            zone="Zone A",
+            platform="Admin",
+            weekly_income=0,
+            vehicle_type="N/A",
+            plan_tier="Admin",
+            phone=None,
+            upi_id=None,
+        ),
+    )
 
 
 @app.post("/login", response_model=schemas.AuthResponse)
@@ -706,12 +815,23 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         platform=user.platform,
         weekly_income=user.weekly_income,
         vehicle_type=user.vehicle_type or "Bike",
+        vehicle_number=user.vehicle_number,
         plan_tier=user.plan_tier or "Standard",
+        shift_status="Offline",
         phone=mask_phone(user.phone),
         phone_hash=hash_identifier(user.phone),
         phone_encrypted=encrypt_secret(user.phone),
         upi_hash=hash_identifier(user.upi_id),
         upi_encrypted=encrypt_secret(user.upi_id),
+        bank_name=user.bank_name,
+        bank_account_last4=("".join(ch for ch in (user.bank_account_number or "") if ch.isdigit())[-4:] or None),
+        bank_account_hash=hash_identifier(user.bank_account_number),
+        bank_account_encrypted=encrypt_secret(user.bank_account_number),
+        ifsc_hash=hash_identifier(user.ifsc_code),
+        ifsc_encrypted=encrypt_secret(user.ifsc_code),
+        emergency_contact=mask_phone(user.emergency_contact),
+        emergency_contact_hash=hash_identifier(user.emergency_contact),
+        emergency_contact_encrypted=encrypt_secret(user.emergency_contact),
     )
     db.add(db_user)
     db.commit()
@@ -968,13 +1088,66 @@ def get_dashboard(
             "platform":      user.platform,
             "weekly_income": user.weekly_income,
             "vehicle_type":  getattr(user, "vehicle_type", "Bike"),
+            "vehicle_number": getattr(user, "vehicle_number", None),
             "phone":         user.phone,
             "plan_tier":     getattr(user, "plan_tier", "Standard"),
+            "shift_status":   getattr(user, "shift_status", "Offline") or "Offline",
+            "bank_name":      getattr(user, "bank_name", None),
+            "bank_account_last4": getattr(user, "bank_account_last4", None),
+            "has_upi":        bool(getattr(user, "upi_hash", None)),
+            "emergency_contact_masked": getattr(user, "emergency_contact", None),
         },
         "active_policy":  schemas.PolicyResponse.model_validate(active_policy) if active_policy else None,
         "wallet_balance": total_balance,
         "claims":         claims,
     }
+
+
+@app.put("/user/{user_id}/profile", response_model=schemas.UserResponse)
+def update_user_profile(
+    user_id: int,
+    profile: UserProfileUpdate,
+    db: Session = Depends(get_db),
+    current_auth: dict = Depends(get_auth_context),
+):
+    _authorize_user_scope(current_auth, user_id)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    for field in ["city", "platform", "weekly_income", "vehicle_type", "vehicle_number", "bank_name", "shift_status"]:
+        value = getattr(profile, field)
+        if value is not None:
+            setattr(user, field, value)
+    if profile.zone is not None:
+        user.zone = _normalize_zone(profile.zone)
+    if profile.upi_id is not None:
+        user.upi_hash = hash_identifier(profile.upi_id)
+        user.upi_encrypted = encrypt_secret(profile.upi_id)
+    if profile.bank_account_number is not None:
+        digits = "".join(ch for ch in profile.bank_account_number if ch.isdigit())
+        user.bank_account_last4 = digits[-4:] if digits else None
+        user.bank_account_hash = hash_identifier(profile.bank_account_number)
+        user.bank_account_encrypted = encrypt_secret(profile.bank_account_number)
+    if profile.ifsc_code is not None:
+        user.ifsc_hash = hash_identifier(profile.ifsc_code)
+        user.ifsc_encrypted = encrypt_secret(profile.ifsc_code)
+    if profile.emergency_contact is not None:
+        user.emergency_contact = mask_phone(profile.emergency_contact)
+        user.emergency_contact_hash = hash_identifier(profile.emergency_contact)
+        user.emergency_contact_encrypted = encrypt_secret(profile.emergency_contact)
+
+    _log_audit(
+        db,
+        actor_role="user",
+        actor_id=str(user_id),
+        action="profile_update",
+        target_type="user",
+        target_id=str(user_id),
+    )
+    db.commit()
+    db.refresh(user)
+    return _serialize_user(user)
 
 
 # ---------------------------------------------------------------------------

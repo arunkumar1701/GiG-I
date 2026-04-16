@@ -20,7 +20,6 @@ function toCsv(result) {
   const rows = [
     ['status', result?.status || ''],
     ['message', result?.message || ''],
-    ['fraudRiskScore', result?.fraudRiskScore ?? ''],
   ];
   return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
 }
@@ -89,8 +88,8 @@ export default function Simulator({
   const timelineSteps = result?.processed?.[0]
     ? [
         ['Tier-1', 'Event and location validated'],
-        ['Tier-2', 'Signal scoring completed'],
-        ['Tier-3', `Final FRS ${result.processed[0].fraudRiskScore?.toFixed?.(2) || result.fraudRiskScore || '--'}`],
+        ['Tier-2', 'Route and policy evidence checked'],
+        ['AI review', 'Decision confidence checked by the claims agent'],
         ['Decision', `${result.processed[0].status} pushed to wallet/admin views`],
       ]
     : [];
@@ -159,7 +158,7 @@ export default function Simulator({
         <h3 className="text-3xl font-bold text-slate-900">Validation timeline</h3>
         {!result ? (
           <p className="mt-3 rounded-[22px] bg-[#fff8ef] p-4 text-sm text-slate-500">
-            Run a simulation to show the fraud checks, decision, and wallet update path.
+            Run a simulation to show the claim checks, decision, and wallet update path.
           </p>
         ) : (
           <div className="mt-4 space-y-3">
