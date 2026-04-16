@@ -1,0 +1,15 @@
+{
+  "name": "gig-i-contracts",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Smart contracts for GiG-I payouts",
+  "scripts": {
+    "compile": "hardhat compile",
+    "clean": "hardhat clean",
+    "compile:solc": "solcjs --abi --bin contracts/GigShieldToken.sol -o build"
+  },
+  "devDependencies": {
+    "hardhat": "^2.24.1",
+    "solc": "^0.8.24"
+  }
+}

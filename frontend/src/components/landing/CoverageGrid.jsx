@@ -1,5 +1,5 @@
 import React from 'react';
-import { CloudRain, ServerCrash, Car } from 'lucide-react';
+import { CloudRain, Flame, MapPinned } from 'lucide-react';
 
 export default function CoverageGrid() {
   return (
@@ -16,23 +16,23 @@ export default function CoverageGrid() {
                 <CloudRain className="w-8 h-8" />
               </div>
               <h3 className="text-2xl font-bold text-slate-900 mb-4">Severe Weather</h3>
-              <p className="text-slate-600 leading-relaxed font-medium">Monsoon & Heatwave Protection. Payouts triggered immediately if local precipitation exceeds 15mm/hr during your active shifts.</p>
+              <p className="text-slate-600 leading-relaxed font-medium">Heavy rain and flood events are validated from the configured weather feed, then evaluated through the fraud engine before payout settlement.</p>
            </div>
            
            <div className="bg-white border border-slate-200 p-10 rounded-3xl shadow-sm hover:shadow-xl hover:border-rose-300 hover:ring-4 ring-rose-50 transition transform hover:-translate-y-2">
               <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mb-8 shadow-inner border border-rose-100">
-                <ServerCrash className="w-8 h-8" />
+                <Flame className="w-8 h-8" />
               </div>
-              <h3 className="text-2xl font-bold text-slate-900 mb-4">Platform Outages</h3>
-              <p className="text-slate-600 leading-relaxed font-medium">App Downtime Guarantee. Payouts mathematically triggered the second your primary delivery platform's servers crash (Error 503).</p>
+              <h3 className="text-2xl font-bold text-slate-900 mb-4">Heatwave Exposure</h3>
+              <p className="text-slate-600 leading-relaxed font-medium">Heatwave signals are supported through the same zone monitoring pipeline using temperature thresholds in the backend weather service.</p>
            </div>
 
            <div className="bg-white border border-slate-200 p-10 rounded-3xl shadow-sm hover:shadow-xl hover:border-amber-300 hover:ring-4 ring-amber-50 transition transform hover:-translate-y-2">
               <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mb-8 shadow-inner border border-amber-100">
-                <Car className="w-8 h-8" />
+                <MapPinned className="w-8 h-8" />
               </div>
-              <h3 className="text-2xl font-bold text-slate-900 mb-4">Urban Gridlock</h3>
-              <p className="text-slate-600 leading-relaxed font-medium">Protection against unplanned local strikes and VIP movement. Automatic ledger payout when zone speeds drop below 8km/h.</p>
+              <h3 className="text-2xl font-bold text-slate-900 mb-4">Manual Event Replay</h3>
+              <p className="text-slate-600 leading-relaxed font-medium">Demo and testing flows can inject a zone event with driver ID and latitude/longitude to exercise the full fraud and payout pipeline.</p>
            </div>
         </div>
       </div>

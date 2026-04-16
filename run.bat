@@ -3,7 +3,7 @@ echo ==============================================
 echo ParametriX System Initialization
 echo ==============================================
 
-echo [1/4] Installing Backend Dependencies...
+echo [1/5] Installing Backend Dependencies...
 cd backend
 pip install -r requirements.txt
 if errorlevel 1 (
@@ -12,10 +12,16 @@ if errorlevel 1 (
   exit /b
 )
 
-echo [2/4] Starting Backend Server...
+echo [2/5] Training ML Models...
+python scripts\train_ml_models.py
+if errorlevel 1 (
+  echo Warning: ML bootstrap did not complete cleanly. The backend will retrain lazily on first request.
+)
+
+echo [3/5] Starting Backend Server...
 start "Backend FastApi Server" cmd /k "uvicorn main:app --reload --host 127.0.0.1 --port 8000"
 
-echo [3/4] Installing Frontend Dependencies...
+echo [4/5] Installing Frontend Dependencies...
 cd ../frontend
 call npm install
 if errorlevel 1 (
@@ -24,7 +30,7 @@ if errorlevel 1 (
   exit /b
 )
 
-echo [4/4] Starting Frontend Dev Server...
+echo [5/5] Starting Frontend Dev Server...
 start "Frontend Vite Server" cmd /k "npm run dev"
 
 echo ==============================================

@@ -4,6 +4,9 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+contracts/artifacts/
+contracts/cache/
+backend/payout_retry_queue.jsonl
 
 # Python
 __pycache__/
@@ -12,6 +15,10 @@ __pycache__/
 venv/
 env/
 .env
+.env.*
+backend/.env.production.local
+backend/.env.prisma.test.local
+backend/model_artifacts/
 
 # MacOS
 .DS_Store

@@ -1,10 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+:root {
+  --app-bg: #f6f1e7;
+  --app-surface: #fbf7ef;
+  --app-surface-strong: #fffdfa;
+  --app-border: #e8dfd0;
+  --app-text: #1f2430;
+  --app-muted: #6f747f;
+  --app-primary: #26457d;
+  --app-accent: #e7b84b;
+  --app-success: #2f8f5b;
+}
+
+html {
+  background: radial-gradient(circle at top, #fffaf0 0%, var(--app-bg) 55%, #efe5d5 100%);
+}
 
 body {
-  @apply bg-gray-50 text-gray-900;
-  font-family: 'Inter', sans-serif;
+  color: var(--app-text);
+  font-family: 'Manrope', sans-serif;
+  min-height: 100vh;
+  background: transparent;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: 'Cormorant Garamond', serif;
 }

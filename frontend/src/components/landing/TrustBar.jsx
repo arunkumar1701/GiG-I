@@ -4,9 +4,9 @@ import { Zap, Clock, Activity, ShieldCheck } from 'lucide-react';
 export default function TrustBar() {
   const items = [
     { icon: Zap, title: 'Zero Paperwork', desc: '100% Automated Payouts' },
-    { icon: Clock, title: 'Instant Settlement', desc: 'Funds in wallet < 60s' },
+    { icon: Clock, title: 'Fast Settlement', desc: 'Ledger updated after approval' },
     { icon: Activity, title: 'AI-Driven Pricing', desc: 'Pay only for zone risk' },
-    { icon: ShieldCheck, title: 'Guidewire Backed', desc: 'Enterprise core systems' },
+    { icon: ShieldCheck, title: 'Fraud Scored', desc: '5-signal decision engine' },
   ];
 
   return (

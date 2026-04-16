@@ -16,7 +16,7 @@ export default function Hero({ onGetQuote }) {
             Uninterrupted <span className="text-blue-700">Earnings.</span> Guaranteed.
           </h1>
           <p className="text-lg text-slate-600 font-medium leading-relaxed max-w-xl mx-auto lg:mx-0">
-            India’s first AI-powered income protection for delivery partners. When the weather stops, or the app goes down, your earnings don't.
+            AI-assisted income protection for delivery partners. When severe weather disrupts a zone, the platform can price risk, validate claims, and settle into the in-app wallet ledger.
           </p>
         </div>
 
@@ -44,9 +44,10 @@ export default function Hero({ onGetQuote }) {
                  <div>
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Base Zone</label>
                     <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-900 transition">
-                       <option value="blr_kora">Koramangala, Bengaluru</option>
-                       <option value="del_south">South Delhi</option>
-                       <option value="mum_cp">Connaught Place, Mumbai</option>
+                       <option value="zone_a">Zone A</option>
+                       <option value="zone_b">Zone B</option>
+                       <option value="zone_c">Zone C</option>
+                       <option value="zone_d">Zone D</option>
                     </select>
                  </div>
 

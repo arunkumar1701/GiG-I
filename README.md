@@ -1,4 +1,3 @@
-
 # GIG-I: Parametric Insurance for the Gig Economy
 **AI-Powered Income Protection with Adversarial Fraud Defense**
 

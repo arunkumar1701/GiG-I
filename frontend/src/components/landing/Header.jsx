@@ -9,7 +9,7 @@ export default function Header({ onLoginClick }) {
           <div className="bg-blue-900 p-2 rounded-xl">
             <ShieldCheck className="text-emerald-400 w-6 h-6" />
           </div>
-          <span className="font-black text-slate-900 text-xl tracking-tight">DEVTrails Protect</span>
+          <span className="font-black text-slate-900 text-xl tracking-tight">GIG-I</span>
         </div>
         <nav className="hidden md:flex items-center gap-8">
           <a href="#coverage" className="text-sm font-semibold text-slate-600 hover:text-slate-900 transition">Coverage Details</a>

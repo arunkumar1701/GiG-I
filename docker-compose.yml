@@ -1,0 +1,141 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: gigi-backend
+    environment:
+      APP_ENV: production
+      ENABLE_PRISMA: ${ENABLE_PRISMA:-true}
+      DB_URL: ${DB_URL:-postgresql://gigi:gigi@postgres:5432/gigi?schema=public}
+      DATABASE_URL: ${DB_URL:-postgresql://gigi:gigi@postgres:5432/gigi?schema=public}
+      PRISMA_BINARY_CACHE_DIR: /app/.cache/prisma-python
+      XDG_CACHE_HOME: /app/.cache
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ADMIN_TOTP_SECRET: ${ADMIN_TOTP_SECRET:?ADMIN_TOTP_SECRET is required}
+      ALLOW_DEMO_ADMIN_TOKEN: ${ALLOW_DEMO_ADMIN_TOKEN:-false}
+      ADMIN_DEMO_TOKEN: ${ADMIN_DEMO_TOKEN:-admin-token}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?DATA_ENCRYPTION_KEY is required}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:?OPENWEATHER_API_KEY is required}
+      DATAGOV_API_KEY: ${DATAGOV_API_KEY:?DATAGOV_API_KEY is required}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY is required}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:?RAZORPAY_KEY_ID is required}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:?RAZORPAY_KEY_SECRET is required}
+      REDIS_URL: redis://redis:6379/0
+      ENABLE_WEB3_PAYOUT: ${ENABLE_WEB3_PAYOUT:-true}
+      WEB3_RPC_URL: ${WEB3_RPC_URL:-}
+      WEB3_CHAIN_ID: ${WEB3_CHAIN_ID:-80002}
+      GIGSHIELD_TOKEN_ADDRESS: ${GIGSHIELD_TOKEN_ADDRESS:-}
+      PRIVATE_KEY: ${PRIVATE_KEY:-}
+      WEB3_DEFAULT_RECIPIENT: ${WEB3_DEFAULT_RECIPIENT:-}
+      WEB3_TOKEN_DECIMALS: ${WEB3_TOKEN_DECIMALS:-18}
+      WEB3_GAS_LIMIT: ${WEB3_GAS_LIMIT:-250000}
+      PAYOUT_RETRY_QUEUE_KEY: ${PAYOUT_RETRY_QUEUE_KEY:-gigi:payout:retry}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-https://localhost}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,backend,gigi-backend,prometheus,gigi-proxy}
+      RAIN_TRIGGER_MM_PER_HR: ${RAIN_TRIGGER_MM_PER_HR:-2.7}
+      HEAT_TRIGGER_CELSIUS: ${HEAT_TRIGGER_CELSIUS:-40.0}
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  proxy:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: gigi-proxy
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    volumes:
+      - nginx_certs:/etc/nginx/certs
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: gigi-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: gigi-grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-gigi_observability_2026}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  redis:
+    image: redis:7-alpine
+    container_name: gigi-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: gigi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gigi}
+      POSTGRES_USER: ${POSTGRES_USER:-gigi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gigi}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gigi} -d ${POSTGRES_DB:-gigi}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis_data:
+  nginx_certs:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

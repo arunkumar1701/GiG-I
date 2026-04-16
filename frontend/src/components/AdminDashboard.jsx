@@ -1,25 +1,57 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { ShieldAlert, CheckCircle2, XCircle, Search, RefreshCcw, Terminal } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  PauseCircle,
+  Radar,
+  RefreshCcw,
+  Search,
+  ShieldAlert,
+  Terminal,
+  XCircle,
+} from 'lucide-react';
 
-const API_BASE = "http://127.0.0.1:8000";
+const SIGNALS = [
+  ['Location', 'frs_location'],
+  ['Device', 'frs_device'],
+  ['Behavior', 'frs_behavior'],
+  ['Network', 'frs_network'],
+  ['Event', 'frs_event'],
+];
 
-export default function AdminDashboard() {
+const statusStyles = {
+  Approved: 'text-green-400',
+  Hold: 'text-amber-400',
+  Rejected: 'text-rose-500',
+};
+
+export default function AdminDashboard({ apiBase, authToken, embedded = false }) {
   const [claims, setClaims] = useState([]);
   const [agentLogs, setAgentLogs] = useState([]);
+  const [monitorStatus, setMonitorStatus] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [submittingId, setSubmittingId] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [expandedClaimId, setExpandedClaimId] = useState(null);
+
+  const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [resClaims, resLogs] = await Promise.all([
-         axios.get(`${API_BASE}/admin/dashboard`),
-         axios.get(`${API_BASE}/admin/agent-logs`)
+      const [resClaims, resLogs, resStatus] = await Promise.all([
+        axios.get(`${apiBase}/admin/dashboard`, { headers }),
+        axios.get(`${apiBase}/admin/agent-logs`, { headers }),
+        axios.get(`${apiBase}/admin/monitor-status`, { headers }),
       ]);
       setClaims(resClaims?.data?.claims || []);
       setAgentLogs(resLogs?.data?.logs || []);
-    } catch (e) {
-      console.error(e);
+      setMonitorStatus(resStatus?.data || null);
+    } catch (error) {
+      console.error(error);
     } finally {
       setLoading(false);
     }
@@ -27,97 +59,287 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 4000); // Polling for demo
-    return () => clearInterval(interval);
-  }, []);
+    const interval = window.setInterval(fetchData, 60000);
+    return () => window.clearInterval(interval);
+  }, [apiBase, authToken]);
+
+  const handleReview = async (claimId, decision) => {
+    try {
+      setSubmittingId(claimId);
+      await axios.post(
+        `${apiBase}/admin/review/${claimId}`,
+        { decision },
+        { headers },
+      );
+      await fetchData();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSubmittingId(null);
+    }
+  };
+
+  const filteredClaims = useMemo(() => {
+    return claims.filter((claim) => {
+      const query = searchTerm.trim().toLowerCase();
+      const matchesSearch = !query || [
+        String(claim.id),
+        String(claim.policy_id || ''),
+        claim.trigger_type || '',
+        claim.status || '',
+        claim.transaction_id || '',
+      ].some((value) => value.toLowerCase().includes(query));
+      const matchesStatus = statusFilter === 'all' || claim.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [claims, searchTerm, statusFilter]);
+
+  const totals = useMemo(() => ({
+    total: claims.length,
+    flagged: claims.filter((claim) => claim.status === 'Hold').length,
+    approved: claims.filter((claim) => claim.status === 'Approved').length,
+    payouts: claims
+      .filter((claim) => claim.status === 'Approved')
+      .reduce((sum, claim) => sum + Number(claim.payout_amount || 0), 0),
+  }), [claims]);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-500 max-w-[1600px] mx-auto h-[calc(100vh-8rem)]">
-      
-      {/* Claims Ledger */}
-      <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl flex flex-col h-full overflow-hidden">
-        <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900">
-           <div className="flex items-center gap-2 text-white">
-              <ShieldAlert className="w-5 h-5 text-blue-500" />
-              <h3 className="font-bold tracking-widest text-sm uppercase text-slate-300">Underwriting Ledger</h3>
-           </div>
-           <button onClick={fetchData} className="text-slate-500 hover:text-white transition">
-              <RefreshCcw className="w-4 h-4" />
-           </button>
+    <div className={`space-y-6 ${embedded ? 'pt-0' : ''}`}>
+      <div className="mx-auto grid max-w-[1600px] gap-4 md:grid-cols-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+            <Clock3 className="h-4 w-4 text-cyan-400" />
+            Last Monitor Run
+          </div>
+          <div className="mt-3 text-lg font-black text-white">
+            {monitorStatus?.last_run ? new Date(monitorStatus.last_run).toLocaleString() : 'Waiting'}
+          </div>
         </div>
-        
-        <div className="flex-1 overflow-auto p-4 custom-scrollbar">
-           {loading && claims.length === 0 ? (
-             <div className="h-full flex items-center justify-center font-bold text-slate-500">Connecting to Core System...</div>
-           ) : claims.length === 0 ? (
-             <div className="h-full flex items-center justify-center font-bold text-slate-600">No events simulated.</div>
-           ) : (
-             <div className="space-y-3">
-               {claims?.map((claim) => (
-                 <div key={claim.id} className="bg-slate-800 border border-slate-700 p-4 rounded-xl flex items-center justify-between">
-                    <div>
-                        <div className="text-white font-bold text-sm tracking-wide">ID: #{claim.id} &middot; {claim.trigger_type}</div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-1">FRS1: {claim.frs1?.toFixed(3)} | FRS2: {claim.frs2?.toFixed(3) || '-'} | FRS3: {claim.frs3?.toFixed(3) || '-'}</div>
-                        <p className="text-xs text-blue-400 font-medium mt-1.5">{claim.explanation}</p>
-                    </div>
-                    <div className="text-right">
-                       {claim.status === "Approved" ? (
-                          <>
-                            <div className="inline-flex items-center gap-1 text-green-400 text-xs font-black uppercase tracking-widest"><CheckCircle2 className="w-3 h-3"/> Approved</div>
-                            <div className="text-white font-bold mt-1">₹{claim.payout_amount}</div>
-                            {claim.transaction_id && <div className="text-[9px] text-slate-500 font-mono mt-1">{claim.transaction_id}</div>}
-                          </>
-                       ) : (
-                          <div className="inline-flex items-center gap-1 text-rose-500 text-xs font-black uppercase tracking-widest"><XCircle className="w-3 h-3"/> Rejected</div>
-                       )}
-                    </div>
-                 </div>
-               ))}
-             </div>
-           )}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+            <Radar className="h-4 w-4 text-emerald-400" />
+            Zones Watched
+          </div>
+          <div className="mt-3 text-lg font-black text-white">
+            {(monitorStatus?.zones_monitored || []).join(', ') || 'None'}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+            <ShieldAlert className="h-4 w-4 text-amber-400" />
+            Flagged Claims
+          </div>
+          <div className="mt-3 text-lg font-black text-white">{totals.flagged}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            Paid Out
+          </div>
+          <div className="mt-3 text-lg font-black text-white">₹{totals.payouts.toFixed(0)}</div>
         </div>
       </div>
 
-      {/* AI Agent Realtime Terminal */}
-      <div className="bg-black rounded-2xl border border-slate-800 shadow-2xl flex flex-col h-full overflow-hidden font-mono relative">
-        <div className="p-3 border-b border-slate-800 flex gap-2 items-center bg-slate-900 absolute top-0 w-full z-10">
-            <div className="w-3 h-3 bg-rose-500 rounded-full"></div>
-            <div className="w-3 h-3 bg-amber-500 rounded-full"></div>
-            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-            <div className="ml-2 text-xs font-bold text-slate-400 tracking-widest uppercase flex items-center gap-2">
-               <Terminal className="w-3 h-3" />
-               Live Agent Logs
+      <div className="mx-auto grid max-w-[1600px] gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="flex min-h-[720px] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
+          <div className="border-b border-slate-800 bg-slate-900 p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex items-center gap-2 text-white">
+                <ShieldAlert className="h-5 w-5 text-blue-500" />
+                <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">Fraud Review Console</h3>
+              </div>
+
+              <div className="flex flex-col gap-3 md:flex-row">
+                <label className="relative min-w-72">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                  <input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Search claim, policy, trigger, tx"
+                    className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-9 pr-4 text-sm text-white outline-none transition focus:border-cyan-400/40"
+                  />
+                </label>
+
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold text-slate-200 outline-none"
+                >
+                  <option value="all">All statuses</option>
+                  <option value="Hold">Hold</option>
+                  <option value="Approved">Approved</option>
+                  <option value="Rejected">Rejected</option>
+                </select>
+
+                <button
+                  onClick={fetchData}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:bg-white/10"
+                >
+                  <RefreshCcw className="h-4 w-4" />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-3 text-[11px] font-bold text-slate-400">
+              <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">Total {totals.total}</span>
+              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-amber-300">Hold {totals.flagged}</span>
+              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-emerald-300">Approved {totals.approved}</span>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto p-4">
+            {loading && claims.length === 0 ? (
+              <div className="flex h-full items-center justify-center font-bold text-slate-500">Connecting to core system...</div>
+            ) : filteredClaims.length === 0 ? (
+              <div className="flex h-full items-center justify-center font-bold text-slate-600">No claims match the current filters.</div>
+            ) : (
+              <div className="space-y-3">
+                {filteredClaims.map((claim) => {
+                  const expanded = expandedClaimId === claim.id;
+                  return (
+                    <div key={claim.id} className="rounded-xl border border-slate-700 bg-slate-800 p-4">
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-bold tracking-wide text-white">Claim #{claim.id}</div>
+                            <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                              Policy {claim.policy_id}
+                            </span>
+                            <span className={`inline-flex items-center gap-1 text-xs font-black uppercase tracking-widest ${statusStyles[claim.status] || 'text-slate-300'}`}>
+                              {claim.status === 'Approved' && <CheckCircle2 className="h-3 w-3" />}
+                              {claim.status === 'Rejected' && <XCircle className="h-3 w-3" />}
+                              {claim.status === 'Hold' && <PauseCircle className="h-3 w-3" />}
+                              {claim.status}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm font-semibold text-cyan-300">{claim.trigger_type}</p>
+                          <p className="mt-1 text-xs text-slate-400">{new Date(claim.timestamp).toLocaleString()}</p>
+                          <p className="mt-2 text-xs font-medium text-blue-300">{claim.explanation || 'No explanation logged.'}</p>
+                        </div>
+
+                        <div className="flex shrink-0 flex-col items-start gap-3 xl:items-end">
+                          <div className="text-right">
+                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Composite FRS</div>
+                            <div className="mt-1 text-2xl font-black text-white">{Number(claim.frs3 || 0).toFixed(2)}</div>
+                            <div className="mt-1 text-xs text-slate-500">₹{Number(claim.payout_amount || 0).toFixed(0)} payout</div>
+                          </div>
+                          <button
+                            onClick={() => setExpandedClaimId(expanded ? null : claim.id)}
+                            className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-300 transition hover:bg-white/10"
+                          >
+                            Details
+                            <ChevronDown className={`h-3.5 w-3.5 transition ${expanded ? 'rotate-180' : ''}`} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 space-y-2">
+                        {SIGNALS.map(([label, key]) => {
+                          const value = Number(claim[key] || 0);
+                          return (
+                            <div key={key}>
+                              <div className="mb-1 flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                <span>{label}</span>
+                                <span>{value.toFixed(2)}</span>
+                              </div>
+                              <div className="h-2 overflow-hidden rounded-full bg-slate-950">
+                                <div
+                                  className={`h-full ${value >= 0.75 ? 'bg-rose-500' : value >= 0.4 ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                                  style={{ width: `${Math.min(value * 100, 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {expanded && (
+                        <div className="mt-4 grid gap-4 rounded-2xl border border-white/10 bg-black/20 p-4 md:grid-cols-2">
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Evidence</p>
+                            <div className="mt-3 space-y-2 text-xs text-slate-300">
+                              <p>Rain at trigger: {claim.rain_mm_at_trigger ?? '--'}</p>
+                              <p>AQI at trigger: {claim.aqi_at_trigger ?? '--'}</p>
+                              <p>Lat/Lon: {claim.driver_lat ?? '--'}, {claim.driver_lon ?? '--'}</p>
+                              <p>Cluster flagged: {claim.cluster_flagged ? 'Yes' : 'No'}</p>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Telemetry</p>
+                            <div className="mt-3 space-y-2 text-xs text-slate-300">
+                              {claim.transaction_id ? <p className="break-all">tx id: {claim.transaction_id}</p> : null}
+                              {claim.transaction_hash ? <p className="break-all">tx hash: {claim.transaction_hash}</p> : null}
+                              {claim.data_hash ? <p className="break-all">data hash: {claim.data_hash}</p> : null}
+                              {claim.device_hash ? <p className="break-all">device: {claim.device_hash}</p> : null}
+                            </div>
+                          </div>
+
+                          {claim.status === 'Hold' && (
+                            <div className="md:col-span-2 flex gap-2 pt-2">
+                              <button
+                                onClick={() => handleReview(claim.id, 'Approve')}
+                                disabled={submittingId === claim.id}
+                                className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-950 disabled:opacity-50"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleReview(claim.id, 'Reject')}
+                                disabled={submittingId === claim.id}
+                                className="rounded-lg bg-rose-500 px-4 py-2 text-xs font-black uppercase tracking-widest text-white disabled:opacity-50"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="relative flex min-h-[720px] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-black font-mono shadow-2xl">
+          <div className="absolute top-0 z-10 flex w-full items-center gap-2 border-b border-slate-800 bg-slate-900 p-3">
+            <div className="h-3 w-3 rounded-full bg-rose-500" />
+            <div className="h-3 w-3 rounded-full bg-amber-500" />
+            <div className="h-3 w-3 rounded-full bg-green-500" />
+            <div className="ml-2 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+              <Terminal className="h-3 w-3" />
+              Live Agent Logs
             </div>
             <div className="ml-auto flex items-center gap-2">
-               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgb(34,197,94,0.8)]"></span>
-               <span className="text-[9px] font-black text-green-500 uppercase tracking-widest">Active</span>
+              <span className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_10px_rgb(34,197,94,0.8)] animate-pulse" />
+              <span className="text-[9px] font-black uppercase tracking-widest text-green-500">Active</span>
             </div>
-        </div>
-        
-        <div className="flex-1 overflow-auto p-5 pt-16 custom-scrollbar text-[11px] leading-relaxed">
-           {agentLogs.length === 0 ? (
-               <div className="text-slate-600">Waiting for events to trigger AI Evaluation Matrix...</div>
-           ) : (
+          </div>
+
+          <div className="flex-1 overflow-auto p-5 pt-16 text-[11px] leading-relaxed">
+            {agentLogs.length === 0 ? (
+              <div className="text-slate-600">Waiting for events to trigger AI evaluation matrix...</div>
+            ) : (
               <div className="space-y-4">
-                 {agentLogs?.map((log, i) => (
-                    <div key={i} className="flex gap-4">
-                        <div className="text-slate-600 shrink-0 w-32 whitespace-nowrap">
-                           {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}
-                        </div>
-                        <div className="text-green-500 shrink-0 w-24">
-                           [{log.step}]
-                        </div>
-                        <div className={`${log.step === 'DECISION' ? (log.log_message.includes('Reject') ? 'text-rose-400 font-bold' : 'text-blue-400 font-bold') : 'text-slate-300'}`}>
-                            {log.claim_id && <span className="text-slate-500 mr-2">[Claim #{log.claim_id}]</span>}
-                            {log.log_message}
-                        </div>
+                {agentLogs.map((log, index) => (
+                  <div key={index} className="flex gap-4">
+                    <div className="w-32 shrink-0 whitespace-nowrap text-slate-600">
+                      {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}
                     </div>
-                 ))}
+                    <div className="w-24 shrink-0 text-green-500">[{log.step}]</div>
+                    <div className={log.step === 'DECISION' ? (log.log_message.includes('Reject') ? 'font-bold text-rose-400' : 'font-bold text-blue-400') : 'text-slate-300'}>
+                      {log.claim_id ? <span className="mr-2 text-slate-500">[Claim #{log.claim_id}]</span> : null}
+                      {log.log_message}
+                    </div>
+                  </div>
+                ))}
               </div>
-           )}
+            )}
+          </div>
         </div>
       </div>
-      
     </div>
   );
 }
