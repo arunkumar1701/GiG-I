@@ -12,7 +12,7 @@ India’s gig delivery workforce operates on a **per-task income model**, making
 *   **Systemic Gap:** Traditional insurance is too slow, claim-heavy, and not designed for short-term income protection.
 
 ## 2. Solution Overview
-GigShield AI is a **Zero-Touch Parametric Insurance Platform** that:
+GiG-I is a **Zero-Touch Parametric Insurance Platform** that:
 *   **Detects:** Monitors real-world disruptions via high-fidelity APIs.
 *   **Predicts:** Uses AI to estimate specific income loss per worker.
 *   **Triggers:** Automatically initiates payouts without manual filing.
@@ -122,7 +122,7 @@ flowchart TD
 *   **Manual Override:** Global switch to shift affected zones to manual verification.
 
 ## 18. Cybersecurity & Data Integrity Architecture
-To ensure the **integrity** and **security** of the platform, GigShield AI implements robust cybersecurity components:
+To ensure the **integrity** and **security** of the platform, GiG-I implements robust cybersecurity components:
 *   **Data Integrity (Hashing):** All sensor data and GPS logs are hashed using **SHA-256** before being stored, preventing any post-event tampering of location history.
 *   **Secure Communication (TLS 1.3):** All API interactions between the mobile client and backend services are encrypted via **TLS 1.3**, protecting against Man-in-the-Middle (MITM) attacks.
 *   **Identity & Access Management (IAM):** We use **JWT (JSON Web Tokens)** with short-lived access and refresh tokens for worker authentication. Administrative actions require **MFA (Multi-Factor Authentication)**.
@@ -344,3 +344,28 @@ The system is cloud-agnostic. In production, each component can run in container
 
 ## 22. Mission Statement
 > *“GIG-I transforms insurance from a reactive claims process into a real-time, AI-driven income protection system—secure against coordinated fraud and optimized for India’s gig workforce.”*
+
+## 23. Extra Project Documentation
+The following documents have been included in the project folder to document fixes and deployment steps:
+*   **DEPLOYMENT_STATUS.md** / **DEPLOYMENT_SUMMARY.md**: Summarizes the deployment status, performance fixes, and fraud simulation enhancements.
+*   **HACKATHON_FIXES.md**: Detailed guide on fixes implemented during the hackathon (fraud telemetry, premium recalculations).
+*   **PERFORMANCE_FIXES.md**: Outlines improvements made to API responses and query optimization.
+*   **TEST_PLAN.md**: Smoke tests and performance tests.
+
+## 24. API Keys Used (Mocked/Hidden)
+Our platform integrates with several essential services, which utilize the following API keys (hidden for security):
+*   **OpenWeatherMap API:** `sk-weather-...`
+*   **WAQI (Air Quality) API:** `sk-waqi-...`
+*   **Gemini (LLM) API:** `sk-gemini-...`
+*   **Razorpay (Sandbox Simulator):** `rzp_test_...`
+*   **TomTom Traffic API:** `sk-tomtom-...`
+
+## 25. Additional Test Cases
+We performed rigorous performance and end-to-end testing to ensure system stability. Based on the `TEST_PLAN.md`, we validated:
+1.  **Quote Calculation Speed:** Verified that `/api/quote/{id}` responds in <2s under load with fallback support.
+2.  **Registration Speed:** Ensured batched processing creates accounts and returns JWT tokens in <1-2s.
+3.  **Fraud Simulation Reliability:** Tested that injecting `fraud_device_claims`, `fraud_ip_claims`, and `fraud_upi_claims` reliably triggers a >0.75 FRS score.
+4.  **UI & Fallback Responsiveness:** Guaranteed that when external APIs time out, the UI receives fallback quote pricing without indefinite hanging.
+
+## 26. Model Data Set Training Link
+*   **Model Data Set Training Link:** [Link to Model Data Set Training / Kaggle / HuggingFace]
