@@ -105,7 +105,7 @@ export default function AdminDashboard({ apiBase, authToken, embedded = false })
 
   return (
     <div className={`space-y-6 ${embedded ? 'pt-0' : ''}`}>
-      <div className="mx-auto grid max-w-[1600px] gap-4 md:grid-cols-4">
+      <div className="mx-auto grid max-w-[1600px] gap-4 md:grid-cols-6">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
             <Clock3 className="h-4 w-4 text-cyan-400" />
@@ -137,6 +137,27 @@ export default function AdminDashboard({ apiBase, authToken, embedded = false })
             Paid Out
           </div>
           <div className="mt-3 text-lg font-black text-white">₹{totals.payouts.toFixed(0)}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+            <CheckCircle2 className="h-4 w-4 text-blue-400" />
+            Loss Ratio
+          </div>
+          <div className={`mt-3 text-lg font-black ${totals.payouts > (totals.total * 60) ? 'text-red-400' : 'text-emerald-400'}`}>
+            {totals.total > 0 ? Math.round((totals.payouts / (totals.total * 60)) * 100) : 0}%
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">of collected premiums</div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+            <Radar className="h-4 w-4 text-purple-400" />
+            Predicted Risks
+          </div>
+          {/* Simple heuristic based on flags/totals */}
+          <div className="mt-3 text-lg font-black text-purple-200">
+            ~{Math.max(1, Math.round(totals.total * 0.15))} events
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">Forecasted next 7 days</div>
         </div>
       </div>
 

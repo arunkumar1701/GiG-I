@@ -67,6 +67,15 @@ export default function Dashboard({
     }
   };
 
+  // Calculate FRS and dynamic premium based on claims history
+  const rejectedClaims = claims.filter((claim) => claim.status === 'Rejected').length;
+  const legitClaims = approvedClaims.length;
+  // 100 base score, drop 20 for fraud, add 5 for legit behavior
+  const frsScore = Math.max(0, Math.min(100, 100 - (rejectedClaims * 20) + (legitClaims * 5)));
+  const basePremium = 50; 
+  // Base x RiskMultiplier (where RiskMultiplier = 100/FRS)
+  const dynamicPremium = frsScore > 0 ? basePremium * (100 / frsScore) : basePremium * 3;
+
   return (
     <div className="space-y-5">
       <div>
@@ -95,10 +104,18 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className="mt-5 grid grid-cols-4 gap-3">
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
             <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Shift status</p>
             <p className="mt-2 text-2xl font-bold text-slate-900">{shiftStatus}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Trust Score (FRS)</p>
+            <p className={`mt-2 text-2xl font-bold ${frsScore < 80 ? 'text-red-600' : 'text-emerald-600'}`}>{frsScore}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Weekly Premium</p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">{formatCurrency(dynamicPremium)}</p>
           </div>
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
             <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Paid claims</p>

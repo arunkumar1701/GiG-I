@@ -271,14 +271,26 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
         <div className="absolute inset-0 opacity-60 [background:linear-gradient(90deg,rgba(38,69,125,0.08)_1px,transparent_1px),linear-gradient(rgba(38,69,125,0.08)_1px,transparent_1px)] [background-size:32px_32px]" />
 
         {online && position ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <div className="rounded-full bg-worker-blue p-3 text-white shadow-[0_12px_24px_rgba(38,69,125,0.25)] animate-pulse">
-              <Navigation className="h-5 w-5" />
+          <div className="absolute inset-0 overflow-hidden rounded-[26px]">
+            <iframe
+              width="100%"
+              height="100%"
+              frameBorder="0"
+              scrolling="no"
+              marginHeight="0"
+              marginWidth="0"
+              src={`https://www.openstreetmap.org/export/embed.html?bbox=${position.lon - 0.005}%2C${position.lat - 0.005}%2C${position.lon + 0.005}%2C${position.lat + 0.005}&layer=mapnik&marker=${position.lat}%2C${position.lon}`}
+              className="pointer-events-none opacity-80"
+            ></iframe>
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none">
+              <div className="rounded-full bg-worker-blue p-2 text-white shadow-[0_12px_24px_rgba(38,69,125,0.25)] animate-pulse">
+                <Navigation className="h-4 w-4" />
+              </div>
+              <div className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-bold text-slate-700 shadow-sm backdrop-blur-sm">
+                {position.lat.toFixed(5)}, {position.lon.toFixed(5)}
+              </div>
+              <AccuracyBadge accuracy={position.accuracy} />
             </div>
-            <div className="rounded-full bg-white px-3 py-1 text-[11px] font-bold text-slate-700 shadow-sm">
-              {position.lat.toFixed(5)}, {position.lon.toFixed(5)}
-            </div>
-            <AccuracyBadge accuracy={position.accuracy} />
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
