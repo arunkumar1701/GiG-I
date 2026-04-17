@@ -132,6 +132,15 @@ class TestSpeedRisk:
         score = speed_risk_score(pings)
         assert 0.0 < score < 1.0, f"Expected mid-range speed risk, got {score}"
 
+    def test_borderline_speed_exact_threshold(self):
+        pings = [_ping(13.08, 80.27, speed_kmh=120)]
+        assert speed_risk_score(pings) == 1.0
+
+    def test_plausible_highway_speed_stays_below_max(self):
+        pings = [_ping(13.08, 80.27, speed_kmh=115)]
+        score = speed_risk_score(pings)
+        assert 0.0 < score < 1.0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # accuracy_risk_score
@@ -180,6 +189,22 @@ class TestContinuityScore:
         score = continuity_score(pings)
         assert score < 0.9, f"Expected lower continuity due to gap, got {score}"
 
+    def test_gap_just_under_threshold_preserves_continuity(self):
+        pings = [
+            _ping(13.08, 80.27, offset_seconds=119),
+            _ping(13.0805, 80.2705, offset_seconds=0),
+        ]
+        score = continuity_score(pings)
+        assert score >= 0.9, f"Expected near-clean continuity for 119s gap, got {score}"
+
+    def test_gap_over_threshold_penalizes_continuity(self):
+        pings = [
+            _ping(13.08, 80.27, offset_seconds=121),
+            _ping(13.0805, 80.2705, offset_seconds=0),
+        ]
+        score = continuity_score(pings)
+        assert score < 0.95, f"Expected penalty once gap crosses 120s, got {score}"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # build_telemetry_evidence
@@ -226,3 +251,15 @@ class TestBuildTelemetryEvidence:
         assert evidence["telemetry_gps_stale"] == 1.0
         assert evidence["telemetry_speed_risk"] == 1.0
         assert evidence["telemetry_accuracy_risk"] == 1.0
+
+    def test_teleportation_jump_hits_speed_anomaly(self):
+        class FakeShift:
+            is_active = True
+            last_ping_at = _now()
+
+        pings = [
+            _ping(13.0827, 80.2707, offset_seconds=240, accuracy=10, speed_kmh=None),
+            _ping(13.1547, 80.2707, offset_seconds=0, accuracy=12, speed_kmh=None),
+        ]
+        evidence = build_telemetry_evidence(FakeShift(), pings)
+        assert evidence["telemetry_speed_risk"] >= 1.0

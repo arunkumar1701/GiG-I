@@ -1,0 +1,46 @@
+# Keep Cloud Build source uploads small and off the C: drive.
+# Docker only needs cloudbuild.yaml, .dockerignore, and backend/ for this build.
+
+.git/
+.gitignore
+.gcloudignore
+
+# Local frontend artifacts are built/deployed separately and are not used by backend/Dockerfile.
+frontend/
+contracts/
+gigi/
+monitoring/
+nginx/
+
+# Local runtime/test/cache output.
+.local_run_logs/
+.pytest_cache/
+.pytest_api_temp_*/
+.pytest_run_temp/
+.pytest_tmp/
+.pytest_tmp_local/
+.tmp/
+tmp/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Local secrets and databases must not be uploaded.
+backend/.env
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+
+# Tests/docs are not required in the production image.
+backend/test_*.py
+backend/tests/
+README.md
+TEST_PLAN.md
+PERFORMANCE_FIXES.md
+DEPLOYMENT_STATUS.md
+DEPLOYMENT_SUMMARY.md
+HACKATHON_FIXES.md
+
+# Keep the trained model bundle, but skip bulky OpenML cache data.
+backend/model_artifacts/openml_cache/

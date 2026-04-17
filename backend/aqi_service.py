@@ -99,7 +99,8 @@ def get_aqi(city: str) -> dict:
                 "filters[city]": city,
                 "limit": 1,
             },
-            timeout_seconds=6.0,
+            timeout_seconds=2.5,  # Reduced from 6.0
+            max_attempts=2,  # Reduced from default 4
         )
 
         records = data.get("records", [])

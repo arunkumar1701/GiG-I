@@ -5,14 +5,51 @@ import AppLayout from './components/AppLayout';
 import Dashboard from './components/Dashboard';
 import PolicyView from './components/PolicyView';
 import WalletView from './components/WalletView';
-import DevPanel from './components/DevPanel';
 import LandingPage from './components/landing/LandingPage';
 import AdminDashboard from './components/AdminDashboard';
-import Simulator from './components/Simulator';
 import ProfileView from './components/ProfileView';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 const AUTH_STORAGE_KEY = 'gig-i-auth';
+const THEME_STORAGE_KEY = 'gig-i-theme';
+const DASHBOARD_POLL_MS = 15000;
+
+const buildDashboardFromAuth = (authState) => {
+  if (!authState?.token || authState?.isAdmin) return null;
+
+  const user = authState.user || {};
+  const weeklyIncome = Number(user.weekly_income || 3000);
+  return {
+    user_meta: {
+      full_name: user.full_name || user.name || 'Delivery Partner',
+      city: user.city || 'Chennai',
+      zone: user.zone || 'Zone A',
+      platform: user.platform || 'Zomato',
+      weekly_income: weeklyIncome,
+      vehicle_type: user.vehicle_type || 'Bike',
+      vehicle_number: user.vehicle_number || null,
+      phone: user.phone || null,
+      plan_tier: user.plan_tier || 'Standard',
+      shift_status: user.shift_status || 'Offline',
+      bank_name: user.bank_name || null,
+      bank_account_last4: user.bank_account_last4 || null,
+      has_upi: Boolean(user.has_upi),
+      emergency_contact_masked: user.emergency_contact_masked || null,
+    },
+    active_policy: null,
+    wallet_balance: 0,
+    claims: [],
+    latest_fraud_risk: null,
+    live_quote: {
+      premium: Math.round(Math.max(weeklyIncome * 0.03, 120)),
+      ml_factors: ['Estimated while live pricing refreshes'],
+      lost_hours_est: 0,
+      source: 'instant_estimate',
+    },
+    demo_pricing: null,
+    is_bootstrap: true,
+  };
+};
 
 const loadStoredAuth = () => {
   const raw = localStorage.getItem(AUTH_STORAGE_KEY);
@@ -28,10 +65,10 @@ const loadStoredAuth = () => {
 
 export default function App() {
   const [auth, setAuth] = useState(() => loadStoredAuth());
+  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) || 'light');
   const [dashboard, setDashboard] = useState(null);
   const [quote, setQuote] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [godModeVisible, setGodModeVisible] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [authEntryMode, setAuthEntryMode] = useState('worker');
   const [toastMessage, setToastMessage] = useState(null);
@@ -40,6 +77,16 @@ export default function App() {
   const refreshToken = auth?.refreshToken || null;
   const currentUserId = auth?.userId || null;
   const isAdmin = Boolean(auth?.isAdmin);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.body.dataset.theme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((currentTheme) => (currentTheme === 'light' ? 'dark' : 'light'));
+  };
 
   const persistAuth = (nextAuth) => {
     if (nextAuth) {
@@ -59,7 +106,6 @@ export default function App() {
     setDashboard(null);
     setQuote(null);
     setActiveTab('dashboard');
-    setGodModeVisible(false);
   };
 
   const getHeaders = () => (
@@ -107,7 +153,10 @@ export default function App() {
     try {
       const res = await withAutoRefresh((activeToken) => axios.get(
         `${API_BASE}/user/${currentUserId}/dashboard`,
-        activeToken ? { headers: { Authorization: `Bearer ${activeToken}` } } : {},
+        {
+          ...(activeToken ? { headers: { Authorization: `Bearer ${activeToken}` } } : {}),
+          timeout: 8000,
+        },
       ));
       setDashboard(res.data);
     } catch (error) {
@@ -127,18 +176,11 @@ export default function App() {
       return undefined;
     }
 
+    setDashboard((currentDashboard) => currentDashboard || buildDashboardFromAuth(auth));
     pollDashboard();
-    const interval = window.setInterval(pollDashboard, 4000);
-    const handleKeyDown = (event) => {
-      if (event.ctrlKey && event.shiftKey && event.key === 'G') {
-        setGodModeVisible((prev) => !prev);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
+    const interval = window.setInterval(pollDashboard, DASHBOARD_POLL_MS);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [token, currentUserId, isAdmin]);
 
@@ -156,10 +198,13 @@ export default function App() {
 
   const handleBuyCoverage = async () => {
     try {
+      if (!quote?.premium) {
+        await handleGetQuote();
+      }
       await withAutoRefresh((activeToken) =>
         axios.post(
           `${API_BASE}/policy/create`,
-          { user_id: currentUserId, premium_amount: quote.premium },
+          { user_id: currentUserId, premium_amount: quote?.premium || 0 },
           activeToken ? { headers: { Authorization: `Bearer ${activeToken}` } } : {},
         ),
       );
@@ -173,29 +218,6 @@ export default function App() {
     }
   };
 
-  const handleTriggerWebhook = async (type, amount, zone, location) => {
-    try {
-      const res = await withAutoRefresh((activeToken) =>
-        axios.post(
-          `${API_BASE}/simulate-event`,
-          {
-            zone,
-            eventType: type,
-            amountPerClaim: amount,
-            driverId: currentUserId,
-            location,
-          },
-          activeToken ? { headers: { Authorization: `Bearer ${activeToken}` } } : {},
-        ),
-      );
-      showToast(`Simulated event triggered: ${res.data.message}`);
-      await pollDashboard();
-    } catch (error) {
-      console.error(error);
-      showToast('Simulation failed.');
-    }
-  };
-
   const handleWithdrawal = async () => {
     showToast('Funds transferred to linked UPI via sandbox payout flow.');
   };
@@ -204,29 +226,48 @@ export default function App() {
     if (showAuth) {
       return (
         <AuthView
+          theme={theme}
+          onToggleTheme={toggleTheme}
           initialMode={authEntryMode}
           onLoginSuccess={(nextAuth) => {
             persistAuth(nextAuth);
+            setDashboard(buildDashboardFromAuth(nextAuth));
             setShowAuth(false);
           }}
         />
       );
     }
 
-    return <LandingPage onLoginClick={(mode = 'worker') => {
-      setAuthEntryMode(mode);
-      setShowAuth(true);
-    }} />;
+    return (
+      <LandingPage
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onLoginClick={(mode = 'worker') => {
+          setAuthEntryMode(mode);
+          setShowAuth(true);
+        }}
+      />
+    );
   }
 
   if (isAdmin) {
     return (
-      <div className="min-h-screen bg-slate-950 p-6 md:p-10 font-sans relative">
+      <div className={`min-h-screen p-6 md:p-10 font-sans relative ${theme === 'dark' ? 'theme-dark bg-[radial-gradient(circle_at_top,#2a0e07_0%,#140804_52%,#040404_100%)] text-white' : 'theme-light bg-slate-950 text-white'}`}>
         <button
           onClick={clearAuth}
           className="absolute top-6 right-6 text-[10px] font-black tracking-widest text-white/50 hover:text-white bg-white/10 px-4 py-2 rounded uppercase transition"
         >
           Exit Admin
+        </button>
+        <button
+          onClick={toggleTheme}
+          className={`absolute top-6 right-36 rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-[0.22em] transition ${
+            theme === 'dark'
+              ? 'border-[#ffb347]/40 bg-[#2b130d] text-[#ffd27a] hover:bg-[#35160f]'
+              : 'border-white/10 bg-white/10 text-white/70 hover:text-white'
+          }`}
+        >
+          {theme === 'dark' ? 'Light mode' : 'Dark mode'}
         </button>
         <h1 className="text-white text-3xl font-black mb-6 tracking-tight border-b border-slate-800 pb-4">
           GLOBAL COMMAND <span className="text-blue-500">//</span> GIG-I PLATFORM
@@ -238,10 +279,10 @@ export default function App() {
 
   if (!dashboard) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_top,#fffaf0_0%,#f6f1e7_58%,#efe5d5_100%)]">
-        <div className="flex flex-col items-center gap-4 rounded-[32px] border border-[#eadfcd] bg-[#fffaf2] p-10 shadow-[0_20px_50px_rgba(73,58,32,0.12)]">
-          <div className="h-10 w-10 rounded-full border-4 border-[#26457d] border-t-transparent animate-spin"></div>
-          <p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-500">Loading worker wallet...</p>
+      <div className={`min-h-screen flex items-center justify-center ${theme === 'dark' ? 'theme-dark bg-[radial-gradient(circle_at_top,#2a0e07_0%,#140804_52%,#040404_100%)]' : 'theme-light bg-[radial-gradient(circle_at_top,#fffaf0_0%,#f6f1e7_58%,#efe5d5_100%)]'}`}>
+        <div className={`flex flex-col items-center gap-4 rounded-[32px] p-10 shadow-[0_20px_50px_rgba(73,58,32,0.12)] ${theme === 'dark' ? 'border border-[#5d2412] bg-[#160d0a] text-[#f7e7cb]' : 'border border-[#eadfcd] bg-[#fffaf2]'}`}>
+          <div className={`h-10 w-10 rounded-full border-4 border-t-transparent animate-spin ${theme === 'dark' ? 'border-[#ff9d2e]' : 'border-[#26457d]'}`}></div>
+          <p className={`text-sm font-bold uppercase tracking-[0.24em] ${theme === 'dark' ? 'text-[#f3c56c]' : 'text-slate-500'}`}>Loading worker wallet...</p>
         </div>
       </div>
     );
@@ -250,6 +291,8 @@ export default function App() {
   return (
     <>
       <AppLayout
+        theme={theme}
+        onToggleTheme={toggleTheme}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         isCovered={!!dashboard.active_policy}
@@ -261,6 +304,8 @@ export default function App() {
             user={dashboard.user_meta}
             activePolicy={dashboard.active_policy}
             claims={dashboard.claims}
+            walletBalance={dashboard.wallet_balance}
+            liveQuote={dashboard.live_quote}
             setActiveTab={setActiveTab}
             apiBase={API_BASE}
             authToken={token}
@@ -279,17 +324,6 @@ export default function App() {
             currentUserId={currentUserId}
           />
         )}
-        {activeTab === 'simulate' && (
-          <Simulator
-            user={dashboard.user_meta}
-            activePolicy={dashboard.active_policy}
-            apiBase={API_BASE}
-            authToken={token}
-            currentUserId={currentUserId}
-            onSimulationComplete={pollDashboard}
-            showToast={showToast}
-          />
-        )}
         {activeTab === 'wallet' && (
           <WalletView
             user={dashboard.user_meta}
@@ -306,31 +340,19 @@ export default function App() {
             authToken={token}
             currentUserId={currentUserId}
             onLogout={clearAuth}
-            onSaved={pollDashboard}
+            onSaved={async () => {
+              setQuote(null);
+              await pollDashboard();
+              showToast('Profile saved. Your next weekly quote is refreshed.');
+            }}
           />
         )}
       </AppLayout>
-
-      <DevPanel
-        isVisible={godModeVisible}
-        toggleVisibility={() => setGodModeVisible(false)}
-        activePolicy={dashboard.active_policy}
-        onTriggerWebhook={handleTriggerWebhook}
-      />
 
       {toastMessage && (
         <div className="fixed top-6 right-6 z-[200] max-w-sm w-full bg-slate-900 text-white p-4 rounded-2xl shadow-2xl animate-in slide-in-from-top-4 fade-in font-medium">
           {toastMessage}
         </div>
-      )}
-
-      {!godModeVisible && (
-        <button
-          onClick={() => setGodModeVisible(true)}
-          className="fixed bottom-6 right-6 z-50 rounded-2xl border border-[#d6c8b6] bg-white/90 px-5 py-3 text-[10px] font-black uppercase tracking-[0.22em] text-slate-700 shadow-[0_10px_30px_rgba(73,58,32,0.18)] transition hover:bg-[#faf4ea]"
-        >
-          Demo Panel (Replay)
-        </button>
       )}
     </>
   );

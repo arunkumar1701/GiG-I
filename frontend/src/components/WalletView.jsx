@@ -21,27 +21,42 @@ export default function WalletView({ user, currentUserId, walletBalance, claims,
   const walletAddress = useMemo(() => buildWalletAddress(user, currentUserId), [currentUserId, user]);
 
   const handleWithdrawal = async () => {
-    if (walletBalance <= 0) return;
+    if (isProcessing || walletBalance <= 0) return;
     setIsProcessing(true);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    await onWithdraw();
-    setIsProcessing(false);
+    try {
+      await onWithdraw();
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(walletAddress);
-    setCopyMessage('Copied');
+    try {
+      await navigator.clipboard.writeText(walletAddress);
+      setCopyMessage('Copied');
+    } catch (error) {
+      console.error('Wallet copy failed:', error);
+      setCopyMessage('Copy unavailable');
+    }
     window.setTimeout(() => setCopyMessage(''), 1800);
   };
 
   const handleShare = async () => {
     const text = `Gig-I wallet: ${walletAddress}`;
-    if (navigator.share) {
-      await navigator.share({ title: 'Gig-I Wallet', text });
-    } else {
-      await navigator.clipboard.writeText(text);
-      setCopyMessage('Share text copied');
-      window.setTimeout(() => setCopyMessage(''), 1800);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'Gig-I Wallet', text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        setCopyMessage('Share text copied');
+        window.setTimeout(() => setCopyMessage(''), 1800);
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('Wallet share failed:', error);
+        setCopyMessage('Share unavailable');
+        window.setTimeout(() => setCopyMessage(''), 1800);
+      }
     }
   };
 

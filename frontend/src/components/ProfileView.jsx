@@ -99,6 +99,23 @@ export default function ProfileView({ user, apiBase, authToken, currentUserId, o
 
         <div className="grid grid-cols-2 gap-3">
           <div>
+            <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Platform</label>
+            <select value={form.platform} onChange={(event) => updateField('platform', event.target.value)} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-[#fffaf4] px-4 py-3 text-sm font-semibold outline-none">
+              <option>Zomato</option>
+              <option>Swiggy</option>
+              <option>Blinkit</option>
+              <option>Zepto</option>
+              <option>Uber Eats</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Weekly earnings</label>
+            <input value={form.weekly_income} onChange={(event) => updateField('weekly_income', Number(event.target.value) || 0)} type="number" min="0" className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-[#fffaf4] px-4 py-3 text-sm font-semibold outline-none" />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
             <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Vehicle</label>
             <input value={form.vehicle_type} onChange={(event) => updateField('vehicle_type', event.target.value)} className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-[#fffaf4] px-4 py-3 text-sm font-semibold outline-none" />
           </div>

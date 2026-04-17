@@ -189,7 +189,8 @@ def get_weather(zone: str) -> dict:
                 "appid": OPENWEATHER_API_KEY,
                 "units": "metric",
             },
-            timeout_seconds=8.0,
+            timeout_seconds=3.0,  # Reduced from 8.0
+            max_attempts=2,  # Reduced from default
             service_name="WeatherService",
         )
         result = _classify_weather(zone, data)
@@ -197,7 +198,7 @@ def get_weather(zone: str) -> dict:
         logger.info("[WeatherService] %s -> %s", zone, result)
         return result
     except Exception as exc:
-        logger.error("[WeatherService] Live weather fetch failed for %s: %s", zone, exc)
+        logger.warning("[WeatherService] Live weather fetch failed for %s: %s; using fallback", zone, exc)
         cached = _get_cached_weather(zone)
         if cached:
             logger.warning("[WeatherService] Returning cached live weather for %s.", zone)
@@ -227,8 +228,9 @@ def get_forecast_disruption_hours(zone: str) -> float:
                 "appid": OPENWEATHER_API_KEY,
                 "units": "metric",
             },
-            timeout_seconds=10.0,
-            service_name="WeatherForecastService",
+            timeout_seconds=4.0,  # Reduced from 10.0
+            max_attempts=2,  # Reduced from default
+            service_name="WeatherService",
         )
         disrupted = sum(
             1
@@ -240,7 +242,7 @@ def get_forecast_disruption_hours(zone: str) -> float:
         _forecast_cache[zone] = (hours, time.time())
         return hours
     except Exception as exc:
-        logger.error("[WeatherService] Forecast fetch failed for %s: %s", zone, exc)
+        logger.warning("[WeatherService] Forecast fetch failed for %s: %s; using fallback", zone, exc)
         cached = _get_cached_forecast(zone)
         if cached is not None:
             logger.warning("[WeatherService] Returning cached live forecast for %s.", zone)

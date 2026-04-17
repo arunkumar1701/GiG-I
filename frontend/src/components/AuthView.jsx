@@ -9,7 +9,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 const ZONES = ['Zone A', 'Zone B', 'Zone C', 'Zone D'];
 const PLATFORMS = ['Zomato', 'Swiggy', 'Zepto', 'Blinkit'];
 
-export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
+export default function AuthView({ onLoginSuccess, initialMode = 'worker', theme = 'light', onToggleTheme }) {
   const [mode, setMode] = useState(initialMode);
   const [step, setStep] = useState('phone');
   const [mobileNumber, setMobileNumber] = useState('');
@@ -153,6 +153,9 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
     setIsLoading(true);
     setErrorMessage('');
     try {
+      const phone = verifiedPhoneRef.current || normalizePhone(mobileNumber);
+      const emergencyContactPhone = emergencyContact ? normalizePhone(emergencyContact) : null;
+      
       const response = await axios.post(`${API_BASE}/register`, {
         name: fullName || 'Delivery Partner',
         city: city || 'Chennai',
@@ -160,13 +163,14 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
         platform,
         weekly_income: parseFloat(weeklyIncome) || 3000,
         vehicle_type: vehicleType,
-        vehicle_number: vehicleNumber,
-        phone: verifiedPhoneRef.current || normalizePhone(mobileNumber),
-        upi_id: upiId,
-        bank_name: bankName,
-        bank_account_number: bankAccountNumber,
-        ifsc_code: ifscCode,
-        emergency_contact: emergencyContact,
+        vehicle_number: vehicleNumber || null,
+        plan_tier: 'Standard',
+        phone: phone || null,
+        upi_id: upiId || null,
+        bank_name: bankName || null,
+        bank_account_number: bankAccountNumber || null,
+        ifsc_code: ifscCode || null,
+        emergency_contact: emergencyContactPhone,
       });
 
       onLoginSuccess({
@@ -177,8 +181,20 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
         user: response.data.user,
       });
     } catch (error) {
-      console.error(error);
-      setErrorMessage(error.response?.data?.detail || 'Registration failed. Please check backend.');
+      console.error('Registration error:', error);
+      // Handle Pydantic validation errors (422)
+      if (error.response?.status === 422) {
+        const validationErrors = error.response?.data?.detail;
+        let errorMsg = 'Validation error: ';
+        if (Array.isArray(validationErrors)) {
+          errorMsg += validationErrors.map(e => `${e.loc?.join('.')} - ${e.msg}`).join('; ');
+        } else {
+          errorMsg += JSON.stringify(validationErrors);
+        }
+        setErrorMessage(errorMsg);
+      } else {
+        setErrorMessage(error.response?.data?.detail || error.message || 'Registration failed. Please check backend.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -196,6 +212,10 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
         password: adminPassword,
       });
       setAdminOtpMeta(response.data);
+      // Auto-fill the OTP field when the backend provides a demo code
+      if (response.data?.demoOtp) {
+        setAdminOtp(response.data.demoOtp);
+      }
     } catch (error) {
       console.error(error);
       setErrorMessage(error.response?.data?.detail || 'Unable to send admin OTP.');
@@ -511,33 +531,63 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
   // Full page render
   // ------------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#fffaf0_0%,#f6f1e7_58%,#efe5d5_100%)] px-4 py-8 text-slate-900">
+    <div className={`theme-${theme} min-h-screen px-4 py-8 ${
+      theme === 'dark'
+        ? 'bg-[radial-gradient(circle_at_top,#341108_0%,#160804_45%,#040404_100%)] text-[#fff5e6]'
+        : 'bg-[radial-gradient(circle_at_top,#fffaf0_0%,#f6f1e7_58%,#efe5d5_100%)] text-slate-900'
+    }`}>
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-5xl items-center justify-center gap-10">
 
         {/* Left panel — visible on large screens */}
         <div className="hidden max-w-md lg:block">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#e9e0d3] bg-white/70 px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.25em] text-[#26457d] shadow-sm backdrop-blur">
+          <div className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.25em] shadow-sm backdrop-blur ${
+            theme === 'dark'
+              ? 'border border-[#6b2a15] bg-black/25 text-[#ffd27a]'
+              : 'border border-[#e9e0d3] bg-white/70 text-[#26457d]'
+          }`}>
             <ShieldCheck className="h-4 w-4" />
             Worker-first onboarding
           </div>
-          <h1 className="mt-6 text-6xl font-bold leading-none text-slate-900">Simple enough for the road.</h1>
-          <p className="mt-5 text-lg font-medium leading-8 text-slate-600">
+          <h1 className={`mt-6 text-6xl font-bold leading-none ${theme === 'dark' ? 'text-[#fff2db]' : 'text-slate-900'}`}>Simple enough for the road.</h1>
+          <p className={`mt-5 text-lg font-medium leading-8 ${theme === 'dark' ? 'text-[#f4cab3]' : 'text-slate-600'}`}>
             Firebase Phone Auth delivers OTPs with military-grade reliability. Low-friction onboarding straight to policy, claims, and wallet payout history.
           </p>
-          <div className="mt-6 flex items-center gap-3 rounded-2xl bg-orange-50 border border-orange-100 px-5 py-4">
-            <Flame className="h-8 w-8 text-orange-400 flex-shrink-0" />
+          <div className={`mt-6 flex items-center gap-3 rounded-2xl px-5 py-4 ${
+            theme === 'dark'
+              ? 'border border-[#5a2312] bg-[linear-gradient(135deg,rgba(255,106,0,0.14),rgba(242,182,61,0.08))]'
+              : 'bg-orange-50 border border-orange-100'
+          }`}>
+            <Flame className={`h-8 w-8 flex-shrink-0 ${theme === 'dark' ? 'text-[#ff9d2e]' : 'text-orange-400'}`} />
             <div>
-              <p className="text-sm font-bold text-orange-800">Firebase Phone Auth</p>
-              <p className="text-xs text-orange-600 mt-0.5">OTPs delivered by Google's infrastructure. No SMS gateway config needed.</p>
+              <p className={`text-sm font-bold ${theme === 'dark' ? 'text-[#ffd27a]' : 'text-orange-800'}`}>Firebase Phone Auth</p>
+              <p className={`text-xs mt-0.5 ${theme === 'dark' ? 'text-[#f0b47d]' : 'text-orange-600'}`}>OTPs delivered by Google's infrastructure. No SMS gateway config needed.</p>
             </div>
           </div>
         </div>
 
         {/* Right panel — auth card */}
-        <div className="w-full max-w-[410px] rounded-[38px] border border-white/70 bg-[#fbf7ef]/95 p-5 shadow-[0_30px_80px_rgba(73,58,32,0.16)] backdrop-blur">
-          <div className="mx-auto mb-5 h-1.5 w-20 rounded-full bg-[#e5dccb]" />
+        <div className={`relative w-full max-w-[410px] rounded-[38px] p-5 shadow-[0_30px_80px_rgba(73,58,32,0.16)] backdrop-blur ${
+          theme === 'dark'
+            ? 'border border-[#5a2312] bg-[rgba(14,7,5,0.92)]'
+            : 'border border-white/70 bg-[#fbf7ef]/95'
+        }`}>
+          <button
+            onClick={onToggleTheme}
+            className={`absolute right-5 top-5 rounded-full border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition ${
+              theme === 'dark'
+                ? 'border-[#ffb347]/40 bg-[#180b08] text-[#ffd27a] hover:bg-[#21100b]'
+                : 'border-[#e2d8ca] bg-white/75 text-[#26457d] hover:bg-white'
+            }`}
+          >
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+          <div className={`mx-auto mb-5 h-1.5 w-20 rounded-full ${theme === 'dark' ? 'bg-[#5a2312]' : 'bg-[#e5dccb]'}`} />
 
-          <div className="rounded-[30px] border border-[#efe4d4] bg-white/75 p-6 shadow-[0_18px_40px_rgba(128,108,73,0.12)]">
+          <div className={`rounded-[30px] p-6 shadow-[0_18px_40px_rgba(128,108,73,0.12)] ${
+            theme === 'dark'
+              ? 'border border-[#3d1a11] bg-[linear-gradient(180deg,rgba(38,13,8,0.96),rgba(15,8,6,0.92))]'
+              : 'border border-[#efe4d4] bg-white/75'
+          }`}>
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <p className="text-3xl font-bold text-slate-900">Gig-I</p>
@@ -583,19 +633,37 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
                       className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm"
                     />
                   </div>
+
+                  {/* Firebase test number info — visible before OTP is requested */}
+                  {!adminOtpMeta && (
+                    <div className="flex items-center gap-3 rounded-[16px] border border-blue-200 bg-blue-50 px-4 py-3">
+                      <span className="text-blue-400 text-base">📱</span>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.15em] text-blue-700">Firebase test number</p>
+                        <p className="text-sm font-bold text-blue-900">+91 95735 87724</p>
+                        <p className="text-[10px] text-blue-500 mt-0.5">OTP will be auto-filled after clicking Send</p>
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <label className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Admin OTP</label>
                     <input
                       id="admin-otp-input"
                       value={adminOtp}
                       onChange={(event) => setAdminOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                      placeholder="6-digit OTP"
-                      className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm"
+                      placeholder="Click 'Send Admin OTP' first"
+                      className="mt-2 w-full rounded-[20px] border border-[#e5d8c6] bg-white px-4 py-3.5 text-base font-semibold text-slate-900 outline-none shadow-sm tracking-[0.4em] placeholder:tracking-normal"
                     />
                     {adminOtpMeta?.demoOtp ? (
-                      <p className="mt-2 rounded-xl bg-[#f3ecdf] px-3 py-2 text-xs font-bold text-[#26457d]">
-                        Demo admin OTP: {adminOtpMeta.demoOtp}
-                      </p>
+                      <div className="mt-2 flex items-center gap-3 rounded-[16px] border-2 border-amber-400 bg-amber-50 px-4 py-3">
+                        <span className="text-amber-500 text-lg">🔑</span>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">Firebase OTP — auto-filled</p>
+                          <p className="text-xl font-black tracking-[0.4em] text-amber-900">{adminOtpMeta.demoOtp}</p>
+                          <p className="text-[10px] text-amber-600 mt-0.5">Sent to +91 {adminOtpMeta.phoneMasked}</p>
+                        </div>
+                      </div>
                     ) : null}
                   </div>
                   <button
@@ -604,7 +672,7 @@ export default function AuthView({ onLoginSuccess, initialMode = 'worker' }) {
                     onClick={handleAdminSendOtp}
                     className="flex w-full items-center justify-center gap-2 rounded-[22px] border border-[#d8cab7] bg-white px-4 py-4 text-sm font-bold text-slate-700 transition hover:bg-[#faf4ea] disabled:opacity-60"
                   >
-                    {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Send admin OTP'}
+                    {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : '📲 Send Admin OTP'}
                   </button>
                   <button
                     id="admin-login-btn"

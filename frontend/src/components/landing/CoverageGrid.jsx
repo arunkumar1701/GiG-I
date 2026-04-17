@@ -31,8 +31,8 @@ export default function CoverageGrid() {
               <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mb-8 shadow-inner border border-amber-100">
                 <MapPinned className="w-8 h-8" />
               </div>
-              <h3 className="text-2xl font-bold text-slate-900 mb-4">Manual Event Replay</h3>
-              <p className="text-slate-600 leading-relaxed font-medium">Demo and testing flows can inject a zone event with driver ID and latitude/longitude to exercise the full fraud and payout pipeline.</p>
+              <h3 className="text-2xl font-bold text-slate-900 mb-4">Zone-Aware Protection</h3>
+              <p className="text-slate-600 leading-relaxed font-medium">Coverage only activates when the rider is actually on shift inside the affected zone, keeping payouts fast for genuine disruptions and strict against spoofed claims.</p>
            </div>
         </div>
       </div>

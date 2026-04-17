@@ -3,26 +3,48 @@ import {
   CreditCard,
   FileText,
   Home,
-  PlaySquare,
   ShieldCheck,
   User as UserIcon,
 } from 'lucide-react';
 
-export default function AppLayout({ children, activeTab, setActiveTab, isCovered, user }) {
+export default function AppLayout({ children, activeTab, setActiveTab, isCovered, user, theme = 'light', onToggleTheme }) {
   const navItems = [
     { id: 'dashboard', icon: Home, label: 'Home' },
     { id: 'policy', icon: FileText, label: 'Policy' },
-    { id: 'simulate', icon: PlaySquare, label: 'Replay' },
     { id: 'wallet', icon: CreditCard, label: 'Wallet' },
     { id: 'profile', icon: UserIcon, label: 'Profile' },
   ];
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#fffaf0_0%,#f6f1e7_58%,#efe5d5_100%)] px-4 py-6 text-slate-900">
-      <div className="mx-auto max-w-[430px] rounded-[38px] border border-white/80 bg-[#fbf7ef]/95 p-4 shadow-[0_35px_80px_rgba(73,58,32,0.18)] backdrop-blur">
-        <div className="mx-auto mb-4 h-1.5 w-20 rounded-full bg-[#e5dccb]" />
+    <div className={`theme-${theme} min-h-screen px-4 py-6 ${
+      theme === 'dark'
+        ? 'bg-[radial-gradient(circle_at_top,#341108_0%,#160804_48%,#040404_100%)] text-[#fff5e6]'
+        : 'bg-[radial-gradient(circle_at_top,#fffaf0_0%,#f6f1e7_58%,#efe5d5_100%)] text-slate-900'
+    }`}>
+      <div className={`mx-auto max-w-[430px] rounded-[38px] p-4 shadow-[0_35px_80px_rgba(73,58,32,0.18)] backdrop-blur ${
+        theme === 'dark'
+          ? 'border border-[#5a2312] bg-[rgba(14,7,5,0.92)]'
+          : 'border border-white/80 bg-[#fbf7ef]/95'
+      }`}>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className={`h-1.5 w-20 rounded-full ${theme === 'dark' ? 'bg-[#5a2312]' : 'bg-[#e5dccb]'}`} />
+          <button
+            onClick={onToggleTheme}
+            className={`rounded-full border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition ${
+              theme === 'dark'
+                ? 'border-[#ffb347]/40 bg-[#180b08] text-[#ffd27a] hover:bg-[#21100b]'
+                : 'border-[#e2d8ca] bg-white/75 text-[#26457d] hover:bg-white'
+            }`}
+          >
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+        </div>
 
-        <div className="overflow-hidden rounded-[30px] border border-[#ede2d3] bg-[#fffaf4] shadow-[0_18px_40px_rgba(128,108,73,0.12)]">
+        <div className={`overflow-hidden rounded-[30px] shadow-[0_18px_40px_rgba(128,108,73,0.12)] ${
+          theme === 'dark'
+            ? 'border border-[#3d1a11] bg-[linear-gradient(180deg,rgba(38,13,8,0.96),rgba(15,8,6,0.92))]'
+            : 'border border-[#ede2d3] bg-[#fffaf4]'
+        }`}>
           <header className="border-b border-[#f0e6d8] bg-white/75 px-5 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -63,7 +85,7 @@ export default function AppLayout({ children, activeTab, setActiveTab, isCovered
             {children}
           </main>
 
-          <nav className="grid grid-cols-5 border-t border-[#f0e6d8] bg-white/75 px-2 py-2">
+          <nav className="grid grid-cols-4 border-t border-[#f0e6d8] bg-white/75 px-2 py-2">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;

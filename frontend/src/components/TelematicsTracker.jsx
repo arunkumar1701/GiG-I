@@ -1,8 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, CheckCircle, MapPin, Navigation, RadioTower, Wifi, WifiOff } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle,
+  MapPin,
+  Navigation,
+  RadioTower,
+  WifiOff,
+} from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
-const PING_INTERVAL_MS = 30_000; // 30 seconds
+const PING_INTERVAL_MS = 30_000;
 
 function AccuracyBadge({ accuracy }) {
   if (accuracy == null) return null;
@@ -13,27 +21,26 @@ function AccuracyBadge({ accuracy }) {
       good ? 'bg-emerald-100 text-emerald-700' : ok ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
     }`}>
       <span className={`h-1.5 w-1.5 rounded-full ${good ? 'bg-emerald-500' : ok ? 'bg-amber-500' : 'bg-red-500'}`} />
-      ±{Math.round(accuracy)}m
+      +/-{Math.round(accuracy)}m
     </span>
   );
 }
 
 export default function TelematicsTracker({ user, activePolicy, onShiftChange, token }) {
-  const [online, setOnline]         = useState(false);
-  const [position, setPosition]     = useState(null);   // { lat, lon, accuracy, speed, heading }
-  const [gpsError, setGpsError]     = useState(null);
-  const [pingCount, setPingCount]   = useState(0);
-  const [shiftId, setShiftId]       = useState(null);
+  const [online, setOnline] = useState(false);
+  const [position, setPosition] = useState(null);
+  const [gpsError, setGpsError] = useState(null);
+  const [pingCount, setPingCount] = useState(0);
+  const [shiftId, setShiftId] = useState(null);
   const [shiftStart, setShiftStart] = useState(null);
-  const [status, setStatus]         = useState('idle'); // idle | requesting | active | error
-  const [consent, setConsent]       = useState(false);
+  const [status, setStatus] = useState('idle');
+  const [consent, setConsent] = useState(false);
   const [consentAsked, setConsentAsked] = useState(false);
+  const [elapsed, setElapsed] = useState('00:00');
 
-  const watchId   = useRef(null);
+  const watchId = useRef(null);
   const pingTimer = useRef(null);
-  const latestPos = useRef(null);  // always holds most recent position for pings
-
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  const latestPos = useRef(null);
 
   const authHeaders = useCallback(() => ({
     'Content-Type': 'application/json',
@@ -50,17 +57,15 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
           lat: pos.lat,
           lon: pos.lon,
           accuracy_m: pos.accuracy,
-          speed_kmh: pos.speed != null ? pos.speed * 3.6 : null,  // m/s → km/h
+          speed_kmh: pos.speed != null ? pos.speed * 3.6 : null,
           heading: pos.heading,
         }),
       });
-      setPingCount(c => c + 1);
+      setPingCount((count) => count + 1);
     } catch (err) {
       console.warn('[Telematics] Ping failed:', err);
     }
   }, [authHeaders, shiftId]);
-
-  // ── GPS Watch ────────────────────────────────────────────────────────────
 
   const startGpsWatch = useCallback(() => {
     if (!navigator.geolocation) {
@@ -68,15 +73,16 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
       setStatus('error');
       return;
     }
+
     setStatus('requesting');
     watchId.current = navigator.geolocation.watchPosition(
       (geo) => {
         const pos = {
-          lat:      geo.coords.latitude,
-          lon:      geo.coords.longitude,
+          lat: geo.coords.latitude,
+          lon: geo.coords.longitude,
           accuracy: geo.coords.accuracy,
-          speed:    geo.coords.speed,
-          heading:  geo.coords.heading,
+          speed: geo.coords.speed,
+          heading: geo.coords.heading,
         };
         setPosition(pos);
         latestPos.current = pos;
@@ -87,7 +93,7 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
         setGpsError(err.message);
         setStatus('error');
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
     );
   }, []);
 
@@ -98,25 +104,18 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
     }
   }, []);
 
-  // ── Shift Control ────────────────────────────────────────────────────────
-
   const startShift = useCallback(async (pos) => {
-    try {
-      const res = await fetch(`${API_URL}/api/v1/shift/start`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ lat: pos.lat, lon: pos.lon, accuracy_m: pos.accuracy }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setShiftId(data.shift_id);
-      setShiftStart(new Date());
-      setPingCount(1);
-      return data.shift_id;
-    } catch (err) {
-      console.error('[Telematics] Start shift failed:', err);
-      throw err;
-    }
+    const res = await fetch(`${API_URL}/api/v1/shift/start`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ lat: pos.lat, lon: pos.lon, accuracy_m: pos.accuracy }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    setShiftId(data.shift_id);
+    setShiftStart(new Date());
+    setPingCount(1);
+    return data.shift_id;
   }, [authHeaders]);
 
   const endShift = useCallback(async () => {
@@ -133,26 +132,24 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
     setPingCount(0);
   }, [authHeaders]);
 
-  // ── Toggle Online/Offline ─────────────────────────────────────────────────
-
   const handleToggle = useCallback(async () => {
     if (online) {
-      // Go Offline
       clearInterval(pingTimer.current);
       stopGpsWatch();
       await endShift();
       setOnline(false);
       setStatus('idle');
       onShiftChange?.('Offline');
-    } else {
-      // Request consent then go online
-      if (!consent) {
-        setConsentAsked(true);
-        return;
-      }
-      startGpsWatch();
+      return;
     }
-  }, [online, consent, startGpsWatch, stopGpsWatch, endShift, onShiftChange]);
+
+    if (!consent) {
+      setConsentAsked(true);
+      return;
+    }
+
+    startGpsWatch();
+  }, [consent, endShift, online, onShiftChange, startGpsWatch, stopGpsWatch]);
 
   const acceptConsent = useCallback(() => {
     setConsent(true);
@@ -160,21 +157,16 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
     startGpsWatch();
   }, [startGpsWatch]);
 
-  // Once we get a position AND shift hasn't started → start shift
   useEffect(() => {
     if (status === 'active' && position && !shiftId && !online) {
       (async () => {
         try {
-          const sid = await startShift(position);
+          await startShift(position);
           setOnline(true);
           onShiftChange?.('Active');
-
-          // Start periodic pings
           pingTimer.current = setInterval(() => {
             if (latestPos.current) sendPing(latestPos.current);
           }, PING_INTERVAL_MS);
-
-          console.log('[Telematics] Shift started, id=', sid);
         } catch {
           setStatus('error');
           setGpsError('Failed to start shift on server. Check your connection.');
@@ -182,36 +174,34 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
         }
       })();
     }
-  }, [status, position, shiftId, online, startShift, sendPing, stopGpsWatch, onShiftChange]);
+  }, [online, onShiftChange, position, sendPing, shiftId, startShift, status, stopGpsWatch]);
 
-  // Cleanup on unmount
   useEffect(() => () => {
     clearInterval(pingTimer.current);
     stopGpsWatch();
   }, [stopGpsWatch]);
 
-  // ── Duration display ──────────────────────────────────────────────────────
-  const [elapsed, setElapsed] = useState('00:00');
   useEffect(() => {
-    if (!shiftStart) return;
-    const t = setInterval(() => {
+    if (!shiftStart) return undefined;
+    const timer = setInterval(() => {
       const diff = Math.floor((Date.now() - shiftStart.getTime()) / 1000);
       const m = String(Math.floor(diff / 60)).padStart(2, '0');
       const s = String(diff % 60).padStart(2, '0');
       setElapsed(`${m}:${s}`);
     }, 1000);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
   }, [shiftStart]);
-
-  // ── Render ────────────────────────────────────────────────────────────────
 
   const coverageLabel = activePolicy
     ? 'Coverage tracks your active shift'
     : 'Buy a policy before going on-shift';
 
+  const mapUrl = position
+    ? `https://www.openstreetmap.org/export/embed.html?bbox=${position.lon - 0.02}%2C${position.lat - 0.02}%2C${position.lon + 0.02}%2C${position.lat + 0.02}&layer=mapnik&marker=${position.lat}%2C${position.lon}`
+    : null;
+
   return (
     <div className="rounded-[28px] bg-tata-bg p-5 shadow-neumorph-outer">
-      {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.22em] text-worker-blue">Live GPS</p>
@@ -224,15 +214,14 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
             online
               ? 'bg-emerald-600 text-white shadow-md'
               : status === 'requesting'
-              ? 'cursor-wait bg-amber-400 text-white'
-              : 'bg-white text-slate-600 shadow-neumorph-inner'
+                ? 'cursor-wait bg-amber-400 text-white'
+                : 'bg-white text-slate-600 shadow-neumorph-inner'
           }`}
         >
-          {online ? 'Online ✓' : status === 'requesting' ? 'Locating…' : 'Go online'}
+          {online ? 'Online OK' : status === 'requesting' ? 'Locating...' : 'Go online'}
         </button>
       </div>
 
-      {/* Consent Dialog */}
       {consentAsked && (
         <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
           <p className="mb-1 flex items-center gap-2 text-sm font-bold text-amber-800">
@@ -246,7 +235,7 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
               onClick={acceptConsent}
               className="rounded-full bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white"
             >
-              Allow & Go Online
+              Allow and Go Online
             </button>
             <button
               onClick={() => setConsentAsked(false)}
@@ -258,7 +247,6 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
         </div>
       )}
 
-      {/* GPS Error */}
       {gpsError && (
         <div className="mb-4 flex items-start gap-2 rounded-2xl bg-red-50 p-3 text-xs text-red-700">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -266,31 +254,28 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
         </div>
       )}
 
-      {/* Map / visualization */}
-      <div className="relative h-48 overflow-hidden rounded-[26px] border border-[#e2d8ca] bg-[#efe7d9] shadow-neumorph-inner">
-        <div className="absolute inset-0 opacity-60 [background:linear-gradient(90deg,rgba(38,69,125,0.08)_1px,transparent_1px),linear-gradient(rgba(38,69,125,0.08)_1px,transparent_1px)] [background-size:32px_32px]" />
+      <div className="relative h-56 overflow-hidden rounded-[26px] border border-[#e2d8ca] bg-[#efe7d9] shadow-neumorph-inner">
+        {online && position && mapUrl ? (
+          <iframe
+            title="Live shift map"
+            src={mapUrl}
+            className="absolute inset-0 h-full w-full border-0"
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+          />
+        ) : (
+          <div className="absolute inset-0 opacity-60 [background:linear-gradient(90deg,rgba(38,69,125,0.08)_1px,transparent_1px),linear-gradient(rgba(38,69,125,0.08)_1px,transparent_1px)] [background-size:32px_32px]" />
+        )}
 
         {online && position ? (
-          <div className="absolute inset-0 overflow-hidden rounded-[26px]">
-            <iframe
-              width="100%"
-              height="100%"
-              frameBorder="0"
-              scrolling="no"
-              marginHeight="0"
-              marginWidth="0"
-              src={`https://www.openstreetmap.org/export/embed.html?bbox=${position.lon - 0.005}%2C${position.lat - 0.005}%2C${position.lon + 0.005}%2C${position.lat + 0.005}&layer=mapnik&marker=${position.lat}%2C${position.lon}`}
-              className="pointer-events-none opacity-80"
-            ></iframe>
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none">
-              <div className="rounded-full bg-worker-blue p-2 text-white shadow-[0_12px_24px_rgba(38,69,125,0.25)] animate-pulse">
-                <Navigation className="h-4 w-4" />
-              </div>
-              <div className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-bold text-slate-700 shadow-sm backdrop-blur-sm">
-                {position.lat.toFixed(5)}, {position.lon.toFixed(5)}
-              </div>
-              <AccuracyBadge accuracy={position.accuracy} />
+          <div className="absolute inset-x-0 bottom-4 flex flex-col items-center justify-center gap-2">
+            <div className="rounded-full bg-worker-blue p-3 text-white shadow-[0_12px_24px_rgba(38,69,125,0.25)] animate-pulse">
+              <Navigation className="h-5 w-5" />
             </div>
+            <div className="rounded-full bg-white px-3 py-1 text-[11px] font-bold text-slate-700 shadow-sm">
+              {position.lat.toFixed(5)}, {position.lon.toFixed(5)}
+            </div>
+            <AccuracyBadge accuracy={position.accuracy} />
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -314,32 +299,30 @@ export default function TelematicsTracker({ user, activePolicy, onShiftChange, t
         )}
       </div>
 
-      {/* Stats grid */}
       <div className="mt-4 grid grid-cols-3 gap-3">
         <div className="rounded-2xl bg-white p-4 shadow-sm">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Duration</p>
-          <p className="mt-2 text-sm font-bold text-slate-900">{online ? elapsed : '—'}</p>
+          <p className="mt-2 text-sm font-bold text-slate-900">{online ? elapsed : '--'}</p>
         </div>
         <div className="rounded-2xl bg-white p-4 shadow-sm">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">GPS pings</p>
-          <p className="mt-2 text-sm font-bold text-slate-900">{online ? pingCount : '—'}</p>
+          <p className="mt-2 text-sm font-bold text-slate-900">{online ? pingCount : '--'}</p>
         </div>
         <div className="rounded-2xl bg-white p-4 shadow-sm">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Speed</p>
           <p className="mt-2 text-sm font-bold text-slate-900">
-            {online && position?.speed != null ? `${(position.speed * 3.6).toFixed(1)} km/h` : '—'}
+            {online && position?.speed != null ? `${(position.speed * 3.6).toFixed(1)} km/h` : '--'}
           </p>
         </div>
       </div>
 
-      {/* Status footer */}
       <div className={`mt-4 rounded-2xl p-4 text-sm font-medium ${
         online ? 'bg-emerald-50 text-emerald-800' : 'bg-[#fff7ec] text-slate-600'
       }`}>
         {online ? (
           <span className="flex items-center gap-2">
             <CheckCircle className="h-4 w-4 text-emerald-600" />
-            Shift active · GPS recorded every 30s · Claims auto-filed on weather trigger
+            Shift active | GPS recorded every 30s | Claims auto-filed on weather trigger
           </span>
         ) : (
           <span className="flex items-center gap-2">

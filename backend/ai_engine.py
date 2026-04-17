@@ -77,22 +77,54 @@ def calculate_premium(
         aqi=aqi_data["aqi"],
     )
 
-    risk_score = pricing_profile["risk_score"]
-    predicted_loss = pricing_profile["predicted_income_loss"]
-    base_rate_component = weekly_income * 0.05 * max(risk_score, 0.35)
-    coverage_component = predicted_loss * 0.08
+    risk_score = float(pricing_profile["risk_score"])
+    predicted_loss = float(pricing_profile["predicted_income_loss"])
+    rain_mm = float(live_weather.get("rain_mm_per_hr", 0.0) or 0.0)
+    temp_c = float(live_weather.get("temp_c", 30.0) or 30.0)
+
+    zone_multiplier = {
+        "Zone A": 1.08,
+        "Zone B": 1.04,
+        "Zone C": 0.99,
+        "Zone D": 1.02,
+    }.get(zone, 1.0)
+    platform_multiplier = {
+        "zomato": 1.04,
+        "swiggy": 1.0,
+        "blinkit": 1.08,
+        "zepto": 1.1,
+        "uber eats": 0.98,
+    }.get(platform.strip().lower(), 1.0)
+    vehicle_multiplier = {
+        "bike": 1.0,
+        "scooter": 1.03,
+        "motorbike": 1.04,
+        "bicycle": 0.9,
+        "cycle": 0.9,
+        "car": 1.14,
+    }.get(vehicle_type.strip().lower(), 1.0)
+
+    income_component = weekly_income * (0.012 + (risk_score * 0.02))
+    disruption_component = predicted_loss * (0.045 + min(risk_score, 0.85) * 0.03)
+    weather_component = (forecast_hours * 2.25) + (rain_mm * 1.8) + (max(temp_c - 35.0, 0.0) * 3.1)
     aqi_multiplier = aqi_to_premium_multiplier(aqi_data["aqi"])
-    final_premium = round((base_rate_component + coverage_component) * aqi_multiplier, 2)
+    pre_multiplier_premium = (income_component + disruption_component + weather_component)
+    final_premium = round(
+        max(pre_multiplier_premium * zone_multiplier * platform_multiplier * vehicle_multiplier * aqi_multiplier, 45.0),
+        2,
+    )
 
     factors.append(f"XGBoost worker risk score: {risk_score:.2f}")
     factors.append(f"Gradient Boosting predicted disruption loss: INR {predicted_loss:.2f}")
     factors.append(f"7-day forecast disruption window: {forecast_hours:.1f}h")
     factors.append(
+        f"Zone/platform/vehicle multiplier: x{zone_multiplier:.2f} x{platform_multiplier:.2f} x{vehicle_multiplier:.2f}"
+    )
+    factors.append(
         f"AQI adjustment ({aqi_data['aqi']} / {aqi_data['category']} / {aqi_data['source']}): x{aqi_multiplier:.2f}"
     )
     factors.append(
-        f"Live weather snapshot: rain {live_weather.get('rain_mm_per_hr', 0.0):.1f}mm/hr, "
-        f"temp {live_weather.get('temp_c', 30.0):.1f}C"
+        f"Live weather snapshot: rain {rain_mm:.1f}mm/hr, temp {temp_c:.1f}C"
     )
     return final_premium, factors, round(forecast_hours, 1)
 
@@ -115,9 +147,10 @@ def evaluate_fraud_multipass(
     db_session=None,
 ) -> tuple:
     logs = [{"step": "INIT", "message": "Starting pure-ML README fraud evaluation pipeline."}]
+    telem = telemetry or {}
 
     try:
-        live_weather = get_weather(zone)
+        live_weather = telem.get("weather_snapshot") or get_weather(zone)
         rain_mm = float(live_weather.get("rain_mm_per_hr", 0.0) or 0.0)
         temp_c = float(live_weather.get("temp_c", 30.0) or 30.0)
         actual_trigger = _normalize_event_name(live_weather.get("trigger") or "")
@@ -137,7 +170,6 @@ def evaluate_fraud_multipass(
         logger.error("[AI Engine] Live context fetch failed: %s", exc)
         raise RuntimeError("Fraud pipeline requires live event context to score claims") from exc
 
-    telem = telemetry or {}
     shift_active = telem.get("shift_active", None)  # None = unknown (legacy path)
 
     # ── Hard Rule: No active shift = instant rejection ─────────────────────────
@@ -246,6 +278,42 @@ def evaluate_fraud_multipass(
         hard_rule_notes.append(f"Zero GPS pings recorded (+{boost} FRS boost: no tracking evidence).")
         logs.append({"step": "HARD_RULE_NO_PINGS", "message": hard_rule_notes[-1]})
 
+    contextual_boost = 0.0
+    contextual_notes = []
+
+    if claim_count_this_week >= 1:
+        boost = min(claim_count_this_week * 0.035, 0.14)
+        contextual_boost += boost
+        contextual_notes.append(f"repeat weekly claims={claim_count_this_week} (+{boost:.3f})")
+    if same_zone_claims_30min >= 2:
+        boost = min((same_zone_claims_30min - 1) * 0.025, 0.12)
+        contextual_boost += boost
+        contextual_notes.append(f"zone burst count={same_zone_claims_30min} (+{boost:.3f})")
+    if geofence_distance_m is not None and geofence_distance_m > 3000:
+        boost = 0.18
+        contextual_boost += boost
+        contextual_notes.append(f"claim far outside zone ({geofence_distance_m:.0f}m) (+{boost:.3f})")
+    elif geofence_distance_m is not None and geofence_distance_m > 1500:
+        boost = 0.08
+        contextual_boost += boost
+        contextual_notes.append(f"claim near zone edge ({geofence_distance_m:.0f}m) (+{boost:.3f})")
+    if same_device_claims_24h >= 2:
+        boost = min((same_device_claims_24h - 1) * 0.045, 0.14)
+        contextual_boost += boost
+        contextual_notes.append(f"same device reuse={same_device_claims_24h} (+{boost:.3f})")
+    if same_ip_claims_1h >= 2:
+        boost = min((same_ip_claims_1h - 1) * 0.03, 0.09)
+        contextual_boost += boost
+        contextual_notes.append(f"same IP burst={same_ip_claims_1h} (+{boost:.3f})")
+    if same_upi_claims_24h >= 1:
+        boost = min(same_upi_claims_24h * 0.08, 0.16)
+        contextual_boost += boost
+        contextual_notes.append(f"wallet convergence={same_upi_claims_24h} (+{boost:.3f})")
+    if cluster_flagged:
+        boost = 0.16
+        contextual_boost += boost
+        contextual_notes.append(f"cluster behavior detected (+{boost:.3f})")
+
     if hard_boost > 0:
         original_frs3 = frs3
         frs3 = round(min(frs3 + hard_boost, 1.0), 3)
@@ -255,6 +323,21 @@ def evaluate_fraud_multipass(
         })
         if hard_rule_notes:
             tier3_explanation = f"[GPS Evidence Flags] {' '.join(hard_rule_notes)} Original model score: {original_frs3}. " + tier3_explanation
+
+    if contextual_boost > 0:
+        original_frs3 = frs3
+        frs3 = round(min(frs3 + contextual_boost, 1.0), 3)
+        logs.append({
+            "step": "CONTEXTUAL_RULES",
+            "message": (
+                f"Contextual fraud heuristics boosted FRS from {original_frs3} to {frs3}. "
+                f"Signals: {'; '.join(contextual_notes)}"
+            ),
+        })
+        tier3_explanation = (
+            f"[Claim Pattern Flags] {'; '.join(contextual_notes)}. "
+            f"Original model score: {original_frs3}. {tier3_explanation}"
+        )
 
     strong_signals = sum(1 for score in [sig_location, sig_device, sig_behavior, sig_network, sig_event] if score > 0.8)
 

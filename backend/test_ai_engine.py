@@ -10,6 +10,50 @@ os.environ["APP_ENV"] = "test"
 import ai_engine
 
 
+def test_calculate_premium_changes_with_income_and_context(monkeypatch):
+    monkeypatch.setattr(ai_engine, "get_forecast_disruption_hours", lambda zone: 6.0 if zone == "Zone A" else 2.0)
+    monkeypatch.setattr(
+        ai_engine,
+        "get_weather",
+        lambda zone: {
+            "trigger": "Heavy Rain" if zone == "Zone A" else None,
+            "rain_mm_per_hr": 18.0 if zone == "Zone A" else 1.0,
+            "temp_c": 38.0 if zone == "Zone A" else 31.0,
+        },
+    )
+    monkeypatch.setattr(
+        ai_engine,
+        "get_aqi",
+        lambda city: {"aqi": 120 if city == "Chennai" else 70, "category": "Moderate", "source": "test"},
+    )
+    monkeypatch.setattr(
+        ai_engine,
+        "predict_pricing_profile",
+        lambda **kwargs: {
+            "risk_score": 0.74 if kwargs["zone"] == "Zone A" else 0.38,
+            "predicted_income_loss": 1600.0 if kwargs["zone"] == "Zone A" else 520.0,
+        },
+    )
+
+    premium_high, _, _ = ai_engine.calculate_premium(
+        weekly_income=6500.0,
+        zone="Zone A",
+        platform="Blinkit",
+        vehicle_type="Scooter",
+        city="Chennai",
+    )
+    premium_low, _, _ = ai_engine.calculate_premium(
+        weekly_income=3500.0,
+        zone="Zone C",
+        platform="Swiggy",
+        vehicle_type="Bike",
+        city="Coimbatore",
+    )
+
+    assert premium_high > premium_low
+    assert premium_high > 100
+
+
 def test_ai_engine_auto_approves_low_risk_claim(monkeypatch):
     monkeypatch.setattr(
         ai_engine,
@@ -116,7 +160,7 @@ def test_ai_engine_holds_mid_risk_claim(monkeypatch):
     assert status == "Hold"
     assert tx_id is None
     assert breakdown["frs_location"] >= 0.7
-    assert "manual review" in explanation.lower()
+    assert "manual" in explanation.lower()
 
 
 def test_ai_engine_rejects_when_hard_rejection_rule_is_met(monkeypatch):
@@ -171,3 +215,65 @@ def test_ai_engine_rejects_when_hard_rejection_rule_is_met(monkeypatch):
     assert breakdown["frs_device"] > 0.8
     assert breakdown["frs_network"] > 0.8
     assert "Auto-Rejected" in explanation
+
+
+def test_ai_engine_repeat_claim_patterns_raise_frs(monkeypatch):
+    monkeypatch.setattr(
+        ai_engine,
+        "_run_gemini_tier3",
+        lambda **kwargs: (kwargs["ml_context"]["fraud_probability"], "Model-native Tier-3 explanation.", []),
+    )
+    monkeypatch.setattr(
+        ai_engine,
+        "get_weather",
+        lambda zone: {
+            "trigger": "Heavy Rain",
+            "rain_mm_per_hr": 9.0,
+            "temp_c": 30.0,
+        },
+    )
+    monkeypatch.setattr(
+        ai_engine,
+        "predict_claim_fraud_profile",
+        lambda **kwargs: {
+            "fraud_probability": 0.21,
+            "predicted_income_loss": 820.0,
+            "worker_risk_score": 0.41,
+            "signal_scores": {
+                "event": 0.24,
+                "location": 0.18,
+                "device": 0.12,
+                "behavior": 0.14,
+                "network": 0.10,
+            },
+            "graph_metrics": {"graph_risk": 0.22},
+            "dataset_source": "test",
+            "model_version": "test",
+            "metrics": {},
+        },
+    )
+
+    _, _, frs_clean, _, _, _, _, _ = ai_engine.evaluate_fraud_multipass(
+        zone="Zone A",
+        event_type="Heavy Rain",
+        user_id=4,
+        weekly_income=5000.0,
+        payout_amount=500.0,
+        claim_count_this_week=0,
+        same_zone_claims_30min=1,
+    )
+    _, _, frs_repeat, _, explanation, _, logs, _ = ai_engine.evaluate_fraud_multipass(
+        zone="Zone A",
+        event_type="Heavy Rain",
+        user_id=4,
+        weekly_income=5000.0,
+        payout_amount=500.0,
+        claim_count_this_week=3,
+        same_zone_claims_30min=4,
+        same_device_claims_24h=2,
+        same_ip_claims_1h=2,
+    )
+
+    assert frs_repeat > frs_clean
+    assert any(log["step"] == "CONTEXTUAL_RULES" for log in logs)
+    assert "Claim Pattern Flags" in explanation

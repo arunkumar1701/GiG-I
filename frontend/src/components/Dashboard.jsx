@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import {
-  Activity,
   CloudRain,
   CreditCard,
   MapPin,
@@ -22,6 +21,8 @@ export default function Dashboard({
   user,
   activePolicy,
   claims,
+  walletBalance,
+  liveQuote,
   setActiveTab,
   apiBase,
   authToken,
@@ -48,11 +49,6 @@ export default function Dashboard({
     return () => window.clearInterval(interval);
   }, [apiBase, authToken]);
 
-  if (!user) return null;
-
-  const zoneWeather = weatherByZone?.[user.zone];
-  const approvedClaims = claims.filter((claim) => claim.status === 'Approved');
-
   const handleShiftChange = async (nextStatus) => {
     setShiftStatus(nextStatus);
     if (!currentUserId) return;
@@ -67,36 +63,43 @@ export default function Dashboard({
     }
   };
 
-  // Calculate FRS and dynamic premium based on claims history
-  const rejectedClaims = claims.filter((claim) => claim.status === 'Rejected').length;
-  const legitClaims = approvedClaims.length;
-  // 100 base score, drop 20 for fraud, add 5 for legit behavior
-  const frsScore = Math.max(0, Math.min(100, 100 - (rejectedClaims * 20) + (legitClaims * 5)));
-  const basePremium = 50; 
-  // Base x RiskMultiplier (where RiskMultiplier = 100/FRS)
-  const dynamicPremium = frsScore > 0 ? basePremium * (100 / frsScore) : basePremium * 3;
+  const zoneWeather = weatherByZone?.[user?.zone];
+  const approvedClaims = useMemo(
+    () => claims.filter((claim) => claim.status === 'Approved'),
+    [claims],
+  );
+  const openClaims = useMemo(
+    () => claims.filter((claim) => ['Pending', 'Hold'].includes(claim.status)),
+    [claims],
+  );
+  const latestClaim = claims.length > 0 ? claims.slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] : null;
+  const displayedPremium = liveQuote?.premium ?? activePolicy?.premium_amount ?? 0;
+
+  if (!user) return null;
 
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[#26457d]">Today&apos;s view</p>
-        <h2 className="mt-2 text-4xl font-bold text-slate-900">Good afternoon, {user.full_name?.split(' ')[0]}</h2>
+        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[#26457d]">Today&apos;s cover</p>
+        <h2 className="mt-2 text-4xl font-bold text-slate-900">
+          Good afternoon, {user.full_name?.split(' ')[0]}
+        </h2>
         <p className="mt-2 text-sm font-medium text-slate-500">
-          Go online, follow zone conditions, and track payouts without insurance jargon.
+          Track your shift, stay covered during active hours, and watch payouts land automatically.
         </p>
       </div>
 
       <div className="rounded-[28px] border border-[#eadfcd] bg-[#fff6ec] p-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Active Weekly Protection</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Weekly protection</p>
             <h3 className="mt-2 text-3xl font-bold text-slate-900">
-              {activePolicy ? 'Covered' : 'Not active'}
+              {activePolicy ? 'Protection active' : 'Protection inactive'}
             </h3>
             <p className="mt-2 text-sm text-slate-500">
               {activePolicy
-                ? `Valid until ${new Date(activePolicy.end_date).toLocaleDateString()}`
-                : 'Buy a weekly policy to unlock automated disruption payouts.'}
+                ? `Covered until ${new Date(activePolicy.end_date).toLocaleDateString()}`
+                : 'Buy a weekly cover before going online to unlock automatic disruption payouts.'}
             </p>
           </div>
           <div className="rounded-[24px] border border-[#ece1d2] bg-white p-4 shadow-sm">
@@ -104,22 +107,29 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-4 gap-3">
+        <div className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(135px,1fr))] gap-3">
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Shift status</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Shift</p>
             <p className="mt-2 text-2xl font-bold text-slate-900">{shiftStatus}</p>
           </div>
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Trust Score (FRS)</p>
-            <p className={`mt-2 text-2xl font-bold ${frsScore < 80 ? 'text-red-600' : 'text-emerald-600'}`}>{frsScore}</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Weekly price</p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">
+              {formatCurrency(displayedPremium)}
+            </p>
+            {activePolicy ? (
+              <p className="mt-1 text-xs text-slate-500">
+                Current cover bought at {formatCurrency(activePolicy.premium_amount)}
+              </p>
+            ) : null}
           </div>
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Weekly Premium</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">{formatCurrency(dynamicPremium)}</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Open claims</p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">{openClaims.length}</p>
           </div>
           <div className="rounded-2xl border border-[#eadfcd] bg-white p-4">
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Paid claims</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">{approvedClaims.length}</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Wallet</p>
+            <p className="mt-2 text-2xl font-bold text-slate-900">{formatCurrency(walletBalance)}</p>
           </div>
         </div>
       </div>
@@ -127,29 +137,39 @@ export default function Dashboard({
       <TelematicsTracker
         user={{ ...user, shift_status: shiftStatus }}
         activePolicy={activePolicy}
-        onShiftChange={(next) => setShiftStatus(next)}
+        onShiftChange={handleShiftChange}
         token={authToken}
       />
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-[24px] border border-[#eadfcd] bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2 text-slate-500">
             <CloudRain className="h-4 w-4 text-[#26457d]" />
-            <p className="text-[11px] font-black uppercase tracking-[0.22em]">Zone radar</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em]">Zone weather</p>
           </div>
-          <p className="mt-3 text-lg font-bold text-slate-900">{zoneWeather?.description || 'Loading weather'}</p>
+          <p className="mt-3 text-lg font-bold text-slate-900">
+            {zoneWeather?.description || 'Loading weather'}
+          </p>
           <p className="mt-1 text-sm text-slate-500">
-            {zoneWeather ? `${zoneWeather.temp_c}C • ${zoneWeather.rain_mm_per_hr} mm/hr rain` : 'Checking live conditions'}
+            {zoneWeather
+              ? `${zoneWeather.temp_c}C | ${zoneWeather.rain_mm_per_hr} mm/hr rain`
+              : 'Checking live conditions'}
+          </p>
+          <p className="mt-2 text-xs font-semibold text-[#26457d]">
+            {zoneWeather?.trigger || 'No active disruption in your zone'}
           </p>
         </div>
 
         <div className="rounded-[24px] border border-[#eadfcd] bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2 text-slate-500">
             <MapPin className="h-4 w-4 text-[#26457d]" />
-            <p className="text-[11px] font-black uppercase tracking-[0.22em]">Operating zone</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em]">Working zone</p>
           </div>
           <p className="mt-3 text-lg font-bold text-slate-900">{user.zone}</p>
           <p className="mt-1 text-sm text-slate-500">{user.city}</p>
+          <p className="mt-2 text-xs font-semibold text-slate-500">
+            {activePolicy ? `${user.platform} | ${user.vehicle_type || 'Bike'}` : 'Activate cover before shift start'}
+          </p>
         </div>
       </div>
 
@@ -164,26 +184,26 @@ export default function Dashboard({
           >
             <div className="flex items-center gap-3">
               <div className="rounded-2xl bg-[#eef2f8] p-3">
-                <Activity className="h-5 w-5 text-[#26457d]" />
+                <CreditCard className="h-5 w-5 text-[#26457d]" />
               </div>
               <div>
-                <p className="font-bold text-slate-900">Review your policy</p>
-                <p className="text-sm text-slate-500">Coverage, premium, and claim status</p>
+                <p className="font-bold text-slate-900">Review policy</p>
+                <p className="text-sm text-slate-500">Check weekly premium, triggers, and claim status</p>
               </div>
             </div>
           </button>
 
           <button
-            onClick={() => setActiveTab('simulate')}
+            onClick={() => setActiveTab('wallet')}
             className="flex items-center justify-between rounded-[24px] border border-[#eadfcd] bg-white p-4 text-left shadow-sm transition hover:bg-[#faf4ea]"
           >
             <div className="flex items-center gap-3">
               <div className="rounded-2xl bg-[#eef2f8] p-3">
-                <CreditCard className="h-5 w-5 text-[#26457d]" />
+                <Wallet className="h-5 w-5 text-[#26457d]" />
               </div>
               <div>
-                <p className="font-bold text-slate-900">Run a simulation</p>
-                <p className="text-sm text-slate-500">Demo the trigger to payout flow</p>
+                <p className="font-bold text-slate-900">Open wallet</p>
+                <p className="text-sm text-slate-500">See payout history and withdraw available funds</p>
               </div>
             </div>
           </button>
@@ -193,33 +213,37 @@ export default function Dashboard({
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-3xl font-bold text-slate-900">Recent activity</h3>
-          <button
-            onClick={() => setActiveTab('wallet')}
-            className="text-xs font-bold uppercase tracking-[0.2em] text-[#26457d]"
-          >
-            See wallet
-          </button>
+          {approvedClaims.length > 0 ? (
+            <button
+              onClick={() => setActiveTab('wallet')}
+              className="text-xs font-bold uppercase tracking-[0.2em] text-[#26457d]"
+            >
+              View payouts
+            </button>
+          ) : null}
         </div>
 
         <div className="rounded-[26px] border border-[#eadfcd] bg-white p-2 shadow-sm">
-          {claims.length === 0 ? (
+          {!latestClaim ? (
             <div className="rounded-[22px] bg-[#fff8ef] p-5 text-sm text-slate-500">
-              No claim events yet. Run a replay to show wallet updates and payout tracking.
+              No claim events yet. When a covered disruption hits your active shift, it will appear here automatically.
             </div>
           ) : (
             <div className="space-y-2">
               {claims.slice().reverse().slice(0, 3).map((claim) => (
-                <div key={claim.id} className="flex items-center justify-between rounded-[22px] bg-[#fff8ef] px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-2xl bg-white p-2 shadow-sm">
-                      <Wallet className="h-4 w-4 text-[#26457d]" />
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-900">{claim.trigger_type}</p>
-                      <p className="text-xs text-slate-500">{claim.status}</p>
-                    </div>
+                <div
+                  key={claim.id}
+                  className="flex items-center justify-between rounded-[22px] bg-[#fff8ef] px-4 py-3"
+                >
+                  <div>
+                    <p className="font-bold text-slate-900">{claim.trigger_type}</p>
+                    <p className="text-xs text-slate-500">
+                      {claim.status} | {new Date(claim.timestamp).toLocaleString()}
+                    </p>
                   </div>
-                  <p className="font-bold text-[#2f8f5b]">{formatCurrency(claim.payout_amount || claim.amount || 0)}</p>
+                  <p className="font-bold text-[#2f8f5b]">
+                    {formatCurrency(claim.payout_amount || claim.amount || 0)}
+                  </p>
                 </div>
               ))}
             </div>

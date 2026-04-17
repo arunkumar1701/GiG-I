@@ -175,6 +175,10 @@ CORS_ALLOW_ORIGINS = settings.cors_allow_origins
 ALLOWED_HOSTS = settings.allowed_hosts
 APP_ENV = settings.app_env
 OTP_CODE_TTL_SECONDS = 300
+LIVE_QUOTE_CACHE_TTL_SECONDS = 300
+SIMULATED_WEATHER_TTL_SECONDS = 900
+_live_quote_cache: dict[tuple, tuple[dict, float]] = {}
+_simulated_weather_by_zone: dict[str, tuple[dict, float]] = {}
 
 
 def _serialize_sensor_payload(
@@ -292,6 +296,216 @@ def _distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
         + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
     )
     return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _compute_demo_trust_and_pricing(
+    claims: list,
+    base_premium: float | None,
+) -> dict:
+    """
+    Derive a demo-friendly trust score and weekly renewal preview.
+
+    The trained fraud models continue to drive claim decisions. This helper only
+    converts past outcomes into an easy-to-explain score for the worker/admin UI.
+    """
+    trust_score = 100
+    approved_count = 0
+    flagged_count = 0
+    rejected_count = 0
+
+    for claim in claims:
+        status = getattr(claim, "status", None)
+        if status == "Approved":
+            trust_score -= 10
+            approved_count += 1
+        elif status == "Hold":
+            trust_score -= 15
+            flagged_count += 1
+        elif status == "Rejected":
+            trust_score -= 20
+            rejected_count += 1
+
+    trust_score = max(0, min(100, trust_score))
+    normalized_base = round(float(base_premium or 50.0), 2)
+    premium_floor_score = max(trust_score, 40)
+    renewal_multiplier = round(100.0 / premium_floor_score, 2)
+
+    return {
+        "trust_score": trust_score,
+        "renewal_multiplier": renewal_multiplier,
+        "base_premium": normalized_base,
+        "renewal_premium": round(normalized_base * renewal_multiplier, 2),
+        "approved_claims": approved_count,
+        "flagged_claims": flagged_count,
+        "rejected_claims": rejected_count,
+    }
+
+
+def _build_live_quote_for_user(user: models.User) -> dict:
+    cache_key = (
+        getattr(user, "id", None),
+        float(user.weekly_income or 0),
+        user.zone,
+        user.platform,
+        getattr(user, "vehicle_type", "Bike"),
+        user.city,
+    )
+    cached = _live_quote_cache.get(cache_key)
+    if cached and time.time() - cached[1] < LIVE_QUOTE_CACHE_TTL_SECONDS:
+        return {**cached[0], "source": f"{cached[0].get('source', 'live_model')}_cache"}
+
+    simulated_weather = _get_simulated_weather(user.zone)
+    try:
+        premium, factors, hours = calculate_premium(
+            float(user.weekly_income or 0),
+            user.zone,
+            user.platform,
+            getattr(user, "vehicle_type", "Bike"),
+            user.city,
+        )
+        if simulated_weather:
+            hours = max(float(hours or 0.0), float(simulated_weather.get("disruption_hours", 0.0) or 0.0))
+            premium = max(
+                float(premium),
+                max(float(user.weekly_income or 3000) * 0.03, 120.0)
+                + (hours * 18.0)
+                + (float(simulated_weather.get("rain_mm_per_hr", 0.0) or 0.0) * 1.2),
+            )
+        quote = {
+            "premium": round(float(premium), 2),
+            "ml_factors": factors,
+            "lost_hours_est": round(float(hours or 0.0), 1),
+            "source": "simulated_event" if simulated_weather else "live_model",
+        }
+        _live_quote_cache[cache_key] = (quote, time.time())
+        return quote
+    except Exception as exc:
+        logger.warning("[Quote] Live quote calculation failed for user %s: %s", getattr(user, "id", "unknown"), exc)
+        fallback_premium = round(max(float(user.weekly_income or 3000) * 0.03, 120.0), 2)
+        quote = {
+            "premium": fallback_premium,
+            "ml_factors": ["Fallback pricing applied from weekly income baseline"],
+            "lost_hours_est": 0.0,
+            "source": "fallback",
+        }
+        _live_quote_cache[cache_key] = (quote, time.time())
+        return quote
+
+
+def _weather_for_simulated_event(zone: str, event_type: str) -> dict:
+    event_name = (event_type or "").strip().lower()
+    if event_name in {"heavy rain", "rain"}:
+        return {
+            "zone": zone,
+            "rain_mm_per_hr": 72.0,
+            "temp_c": 29.0,
+            "weather_code": 502,
+            "description": "Simulated heavy rain",
+            "trigger": "Heavy Rain",
+            "disruption_hours": 4.0,
+            "source": "simulation",
+        }
+    if event_name in {"flood alert", "flood"}:
+        return {
+            "zone": zone,
+            "rain_mm_per_hr": 96.0,
+            "temp_c": 28.0,
+            "weather_code": 503,
+            "description": "Simulated flood alert",
+            "trigger": "Flood Alert",
+            "disruption_hours": 6.0,
+            "source": "simulation",
+        }
+    if event_name in {"heatwave", "heat"}:
+        return {
+            "zone": zone,
+            "rain_mm_per_hr": 0.0,
+            "temp_c": 43.0,
+            "weather_code": 800,
+            "description": "Simulated heatwave",
+            "trigger": "Heatwave",
+            "disruption_hours": 3.0,
+            "source": "simulation",
+        }
+    return {
+        "zone": zone,
+        "rain_mm_per_hr": 0.0,
+        "temp_c": 31.0,
+        "weather_code": 781,
+        "description": "Simulated official disruption",
+        "trigger": "Urban Shutdown",
+        "disruption_hours": 5.0,
+        "source": "simulation",
+    }
+
+
+def _set_simulated_weather(zone: str, event_type: str) -> dict:
+    weather = _weather_for_simulated_event(zone, event_type)
+    _simulated_weather_by_zone[zone] = (weather, time.time())
+    _clear_live_quote_cache_for_zone(zone)
+    return weather
+
+
+def _get_simulated_weather(zone: str) -> Optional[dict]:
+    cached = _simulated_weather_by_zone.get(zone)
+    if not cached:
+        return None
+    weather, cached_at = cached
+    if time.time() - cached_at > SIMULATED_WEATHER_TTL_SECONDS:
+        _simulated_weather_by_zone.pop(zone, None)
+        return None
+    return weather
+
+
+def _get_effective_weather(zone: str) -> dict:
+    return _get_simulated_weather(zone) or get_weather(zone)
+
+
+def _clear_live_quote_cache_for_user(user_id: int) -> None:
+    stale_keys = [cache_key for cache_key in _live_quote_cache if cache_key[0] == user_id]
+    for cache_key in stale_keys:
+        _live_quote_cache.pop(cache_key, None)
+
+
+def _clear_live_quote_cache_for_zone(zone: str) -> None:
+    stale_keys = [cache_key for cache_key in _live_quote_cache if cache_key[2] == zone]
+    for cache_key in stale_keys:
+        _live_quote_cache.pop(cache_key, None)
+
+
+def _build_simulation_telemetry(
+    req: "EventTriggerRequest",
+    *,
+    zone_lat: float,
+    zone_lon: float,
+    geofence_distance_m: Optional[float],
+    weather_snapshot: Optional[dict] = None,
+) -> dict:
+    telemetry = {
+        "zone": req.zone,
+        "zone_lat": zone_lat,
+        "zone_lon": zone_lon,
+        "timestamp": (req.timestamp or datetime.datetime.utcnow()).isoformat(),
+        "weather_snapshot": weather_snapshot or _get_effective_weather(req.zone),
+    }
+    if req.location:
+        telemetry.update({
+            "gps_lat": req.location.lat,
+            "gps_lon": req.location.lon,
+            "geofence_distance_m": geofence_distance_m,
+        })
+
+    if req.fraud_test_mode:
+        telemetry.update({
+            "shift_active": True,
+            "telemetry_continuity": 0.05,
+            "telemetry_speed_risk": 0.96,
+            "telemetry_gps_stale": 0.92,
+            "telemetry_accuracy_risk": 0.88,
+            "telemetry_distance_km": round((geofence_distance_m or 4800.0) / 1000.0, 2),
+            "telemetry_ping_count": 0,
+        })
+    return telemetry
 
 
 def _recent_claim_counts_for_hashes(
@@ -610,6 +824,17 @@ async def rate_limit_middleware(request: Request, call_next):
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.get("/")
+def root():
+    """Root endpoint - API status and documentation."""
+    return {
+        "service": "GiG-I Parametric Insurance",
+        "version": "2.0.0",
+        "status": "running",
+        "docs_url": "/docs",
+        "openapi_url": "/openapi.json",
+    }
+
 @app.get("/health")
 def health():
     security_posture = get_security_posture()
@@ -667,7 +892,7 @@ def monitor_status(_: dict = Depends(require_admin)):
 @app.get("/weather/live")
 def live_weather():
     """Returns current real weather for all monitored zones."""
-    return {zone: get_weather(zone) for zone in ALL_ZONES}
+    return {zone: _get_effective_weather(zone) for zone in ALL_ZONES}
 
 
 # ---------------------------------------------------------------------------
@@ -787,10 +1012,41 @@ def _verify_admin_password_only(username: str, password: str) -> None:
         raise HTTPException(status_code=401, detail="Invalid admin credentials")
 
 
+# Firebase test number: +91 9573587724, fixed test OTP: 699685
+# Used for admin login in non-production (no real SMS needed).
+ADMIN_DEMO_OTP = "699685"
+ADMIN_TEST_PHONE = "9573587724"
+
+
+def _admin_demo_phone() -> str:
+    return settings.admin_phone_number or ADMIN_TEST_PHONE
+
+
+def _admin_should_use_demo_otp() -> bool:
+    return APP_ENV != "production" or settings.otp_provider in ("demo", "firebase")
+
+
 @app.post("/api/v1/admin/send-otp")
 async def request_admin_otp(req: AdminOtpRequest):
     _verify_admin_password_only(req.username, req.password)
-    admin_phone = settings.admin_phone_number or ("9999999999" if APP_ENV != "production" else "")
+
+    # Demo path: always expose the fixed Firebase test OTP directly.
+    # This keeps the admin demo stable even when Cloud Run is using APP_ENV=production.
+    if _admin_should_use_demo_otp():
+        admin_phone = _admin_demo_phone()
+        key = otp_service._cache_key(otp_service.normalize_phone(admin_phone), "admin")
+        await otp_service._cache_set(key, ADMIN_DEMO_OTP)
+        masked = f"******{admin_phone[-4:]}" if len(admin_phone) >= 4 else "******"
+        return {
+            "phoneMasked": masked,
+            "expiresInSeconds": settings.otp_ttl_seconds,
+            "provider": "demo",
+            "message": "Demo admin OTP ready (Firebase test number)",
+            "demoOtp": ADMIN_DEMO_OTP,
+        }
+
+    # Production path — send real OTP via configured SMS provider.
+    admin_phone = settings.admin_phone_number or ""
     if not admin_phone:
         raise HTTPException(status_code=500, detail="ADMIN_PHONE_NUMBER is not configured")
 
@@ -816,15 +1072,22 @@ async def request_admin_otp(req: AdminOtpRequest):
 @app.post("/api/v1/admin/verify-otp", response_model=schemas.AuthResponse)
 async def verify_admin_otp(req: AdminOtpVerifyRequest, db: Session = Depends(get_db)):
     _verify_admin_password_only(req.username, req.password)
-    admin_phone = settings.admin_phone_number or ("9999999999" if APP_ENV != "production" else "")
-    try:
-        result = await otp_service.verify_otp(admin_phone, req.otp, purpose="admin")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Admin OTP verification failed")
-        raise HTTPException(status_code=502, detail="OTP gateway unavailable") from exc
-    if not result["verified"]:
+
+    # Demo path: accept the fixed Firebase OTP directly.
+    if _admin_should_use_demo_otp() and hmac.compare_digest(req.otp.strip(), ADMIN_DEMO_OTP):
+        verified = True
+    else:
+        admin_phone = settings.admin_phone_number or (_admin_demo_phone() if _admin_should_use_demo_otp() else "")
+        try:
+            result = await otp_service.verify_otp(admin_phone, req.otp, purpose="admin")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Admin OTP verification failed")
+            raise HTTPException(status_code=502, detail="OTP gateway unavailable") from exc
+        verified = result["verified"]
+
+    if not verified:
         raise HTTPException(status_code=401, detail="Invalid or expired admin OTP")
 
     tokens = create_token_pair(0, role="admin")
@@ -898,6 +1161,21 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         if existing:
             raise HTTPException(status_code=409, detail="User already exists for this phone number")
 
+    # Pre-compute all hashes and encryptions
+    phone_hash = hash_identifier(user.phone) if user.phone else None
+    phone_encrypted = encrypt_secret(user.phone) if user.phone else None
+    upi_hash = hash_identifier(user.upi_id) if user.upi_id else None
+    upi_encrypted = encrypt_secret(user.upi_id) if user.upi_id else None
+    bank_digits = "".join(ch for ch in (user.bank_account_number or "") if ch.isdigit())
+    bank_last4 = (bank_digits[-4:] or None) if bank_digits else None
+    bank_hash = hash_identifier(user.bank_account_number) if user.bank_account_number else None
+    bank_encrypted = encrypt_secret(user.bank_account_number) if user.bank_account_number else None
+    ifsc_hash = hash_identifier(user.ifsc_code) if user.ifsc_code else None
+    ifsc_encrypted = encrypt_secret(user.ifsc_code) if user.ifsc_code else None
+    emergency_masked = mask_phone(user.emergency_contact) if user.emergency_contact else None
+    emergency_hash = hash_identifier(user.emergency_contact) if user.emergency_contact else None
+    emergency_encrypted = encrypt_secret(user.emergency_contact) if user.emergency_contact else None
+
     db_user = models.User(
         name=user.name,
         city=user.city,
@@ -908,25 +1186,25 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         vehicle_number=user.vehicle_number,
         plan_tier=user.plan_tier or "Standard",
         shift_status="Offline",
-        phone=mask_phone(user.phone),
-        phone_hash=hash_identifier(user.phone),
-        phone_encrypted=encrypt_secret(user.phone),
-        upi_hash=hash_identifier(user.upi_id),
-        upi_encrypted=encrypt_secret(user.upi_id),
+        phone=mask_phone(user.phone) if user.phone else None,
+        phone_hash=phone_hash,
+        phone_encrypted=phone_encrypted,
+        upi_hash=upi_hash,
+        upi_encrypted=upi_encrypted,
         bank_name=user.bank_name,
-        bank_account_last4=("".join(ch for ch in (user.bank_account_number or "") if ch.isdigit())[-4:] or None),
-        bank_account_hash=hash_identifier(user.bank_account_number),
-        bank_account_encrypted=encrypt_secret(user.bank_account_number),
-        ifsc_hash=hash_identifier(user.ifsc_code),
-        ifsc_encrypted=encrypt_secret(user.ifsc_code),
-        emergency_contact=mask_phone(user.emergency_contact),
-        emergency_contact_hash=hash_identifier(user.emergency_contact),
-        emergency_contact_encrypted=encrypt_secret(user.emergency_contact),
+        bank_account_last4=bank_last4,
+        bank_account_hash=bank_hash,
+        bank_account_encrypted=bank_encrypted,
+        ifsc_hash=ifsc_hash,
+        ifsc_encrypted=ifsc_encrypted,
+        emergency_contact=emergency_masked,
+        emergency_contact_hash=emergency_hash,
+        emergency_contact_encrypted=emergency_encrypted,
     )
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    tokens = create_token_pair(db_user.id)
+    db.flush()  # Get the ID without committing yet
+
+    # Log audit event
     _log_audit(
         db,
         actor_role="user",
@@ -936,7 +1214,14 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         target_id=str(db_user.id),
         metadata={"zone": db_user.zone},
     )
+
+    # Single batch commit for both user and audit log
     db.commit()
+    db.refresh(db_user)
+
+    # Generate tokens (no DB access needed)
+    tokens = create_token_pair(db_user.id)
+
     return schemas.AuthResponse(
         access_token=tokens["access_token"],
         refresh_token=tokens["refresh_token"],
@@ -1194,25 +1479,36 @@ def get_quote(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Run quote calculation with timeout using thread executor
+    import concurrent.futures
     try:
-        premium, factors, hours = calculate_premium(
-            user.weekly_income,
-            user.zone,
-            user.platform,
-            getattr(user, "vehicle_type", "Bike"),
-            user.city,
-        )
-    except Exception as e:
-        logger.warning(f"[Quote] Premium calculation failed: {e}. Using fallback.")
-        premium = 150.0
-        factors = ["Fallback pricing applied"]
-        hours   = 10.0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_build_live_quote_for_user, user)
+            live_quote = future.result(timeout=5.0)  # 5s timeout max
+    except concurrent.futures.TimeoutError:
+        logger.warning("[Quote] Timeout after 5s for user %s; using fallback", user_id)
+        # Use immediate fallback instead of trying again
+        live_quote = {
+            "premium": round(max(float(user.weekly_income or 3000) * 0.03, 120.0), 2),
+            "ml_factors": ["Quick fallback pricing due to service timeout"],
+            "lost_hours_est": 0.0,
+            "source": "fallback_timeout",
+        }
+    except Exception as exc:
+        logger.error("[Quote] Unexpected error for user %s: %s", user_id, exc)
+        live_quote = {
+            "premium": round(max(float(user.weekly_income or 3000) * 0.03, 120.0), 2),
+            "ml_factors": ["Fallback pricing due to error"],
+            "lost_hours_est": 0.0,
+            "source": "fallback_error",
+        }
 
     return {
         "user_id":       user_id,
-        "premium":       round(premium, 2),
-        "ml_factors":    factors,
-        "lost_hours_est": hours,
+        "premium":       live_quote["premium"],
+        "ml_factors":    live_quote["ml_factors"],
+        "lost_hours_est": live_quote["lost_hours_est"],
+        "source": live_quote["source"],
     }
 
 
@@ -1231,11 +1527,17 @@ def create_policy(
     if existing_active:
         raise HTTPException(status_code=409, detail="An active policy already exists for this user")
 
+    user = db.query(models.User).filter(models.User.id == policy.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    live_quote = _build_live_quote_for_user(user)
+    premium_amount = round(float(live_quote["premium"]), 2)
     end_date  = datetime.datetime.utcnow() + datetime.timedelta(days=7)
     db_policy = models.Policy(
         user_id=policy.user_id,
         end_date=end_date,
-        premium_amount=policy.premium_amount
+        premium_amount=premium_amount
     )
     db.add(db_policy)
     _log_audit(
@@ -1244,7 +1546,7 @@ def create_policy(
         actor_id=str(policy.user_id),
         action="policy_create",
         target_type="policy",
-        metadata={"premium_amount": policy.premium_amount},
+        metadata={"premium_amount": premium_amount, "quote_source": live_quote.get("source")},
     )
     db.commit()
     db.refresh(db_policy)
@@ -1296,6 +1598,8 @@ def get_policy_detail(
 
     approved_payout_total = sum(float(claim.payout_amount or 0) for claim in claims if claim.status == "Approved")
     latest_claim = claims[0] if claims else None
+    demo_pricing = _compute_demo_trust_and_pricing(claims, float(policy.premium_amount))
+    live_quote = _build_live_quote_for_user(user) if user else None
 
     return {
         "policy": schemas.PolicyResponse.model_validate(policy),
@@ -1313,6 +1617,8 @@ def get_policy_detail(
             "behavior": getattr(latest_claim, "frs_behavior", None),
             "network": getattr(latest_claim, "frs_network", None),
         },
+        "liveQuote": live_quote,
+        "demoPricing": demo_pricing,
         "claims": [schemas.ClaimResponse.model_validate(claim) for claim in claims[:20]],
     }
 
@@ -1340,6 +1646,13 @@ def get_dashboard(
             if c.status == "Approved" and c.payout_amount:
                 total_balance += float(c.payout_amount)
 
+    latest_claim = max(claims, key=lambda claim: claim.timestamp) if claims else None
+    demo_pricing = _compute_demo_trust_and_pricing(
+        claims,
+        float(active_policy.premium_amount) if active_policy else None,
+    )
+    live_quote = _build_live_quote_for_user(user)
+
     return {
         "user_meta": {
             "full_name":     user.name,
@@ -1360,6 +1673,9 @@ def get_dashboard(
         "active_policy":  schemas.PolicyResponse.model_validate(active_policy) if active_policy else None,
         "wallet_balance": total_balance,
         "claims":         claims,
+        "latest_fraud_risk": getattr(latest_claim, "frs3", None),
+        "live_quote": live_quote,
+        "demo_pricing": demo_pricing,
     }
 
 
@@ -1407,6 +1723,8 @@ def update_user_profile(
     )
     db.commit()
     db.refresh(user)
+    _clear_live_quote_cache_for_user(user_id)
+
     return _serialize_user(user)
 
 
@@ -1536,7 +1854,103 @@ def get_admin_dashboard(
     _: dict = Depends(require_admin),
 ):
     claims = db.query(models.Claim).order_by(models.Claim.timestamp.desc()).all()
-    return {"claims": [schemas.ClaimResponse.model_validate(c) for c in claims]}
+    all_users = db.query(models.User).order_by(models.User.name.asc()).all()
+    active_shifts = db.query(models.WorkerShift).filter(models.WorkerShift.is_active == True).all()
+    active_shift_count = len(active_shifts)
+    approved_claims = [claim for claim in claims if claim.status == "Approved"]
+    approved_payout_total = round(
+        sum(float(claim.payout_amount or 0) for claim in approved_claims),
+        2,
+    )
+    total_premium_collected = round(
+        sum(float(policy.premium_amount or 0) for policy in db.query(models.Policy).all()),
+        2,
+    )
+    average_payout = (
+        round(approved_payout_total / len(approved_claims), 2)
+        if approved_claims
+        else 500.0
+    )
+
+    zone_exposure = []
+    for zone in ALL_ZONES:
+        weather_snapshot = _get_effective_weather(zone)
+        zone_shift_count = sum(
+            1 for shift in active_shifts
+            if getattr(shift.user, "zone", None) == zone
+        )
+        rain_intensity = float(weather_snapshot.get("rain_mm_per_hr", 0.0) or 0.0)
+        temp_c = float(weather_snapshot.get("temp_c", 0.0) or 0.0)
+        trigger_live = bool(weather_snapshot.get("trigger"))
+        disruption_hours = float(weather_snapshot.get("disruption_hours", 0.0) or 0.0)
+        weather_probability = max(
+            min(rain_intensity / 60.0, 1.0),
+            min(max(temp_c - 36.0, 0.0) / 8.0, 1.0),
+            min(disruption_hours / 6.0, 1.0),
+        )
+        expected_claims = int(round(zone_shift_count * weather_probability))
+        projected_payout = round(expected_claims * average_payout, 2)
+
+        zone_exposure.append({
+            "zone": zone,
+            "active_workers": zone_shift_count,
+            "weather_probability": round(weather_probability, 2),
+            "expected_claims": expected_claims,
+            "projected_payout": projected_payout,
+            "trigger_live": trigger_live,
+            "disruption_hours": round(disruption_hours, 1),
+            "weather": weather_snapshot,
+        })
+
+    projected_claims_next_week = sum(item["expected_claims"] for item in zone_exposure)
+    projected_payout_next_week = round(sum(item["projected_payout"] for item in zone_exposure), 2)
+    projected_loss_ratio = round(
+        (projected_payout_next_week / total_premium_collected)
+        if total_premium_collected > 0
+        else 0.0,
+        2,
+    )
+    live_loss_ratio = round(
+        (approved_payout_total / total_premium_collected)
+        if total_premium_collected > 0
+        else 0.0,
+        2,
+    )
+    demo_workers = []
+    for user in all_users:
+        latest_policy = (
+            db.query(models.Policy)
+            .filter(models.Policy.user_id == user.id)
+            .order_by(models.Policy.start_date.desc())
+            .first()
+        )
+        demo_workers.append({
+            "user_id": user.id,
+            "full_name": user.name,
+            "zone": user.zone,
+            "city": user.city,
+            "platform": user.platform,
+            "weekly_income": float(user.weekly_income or 0),
+            "vehicle_type": getattr(user, "vehicle_type", "Bike"),
+            "shift_status": getattr(user, "shift_status", "Offline") or "Offline",
+            "active_policy_id": latest_policy.id if latest_policy and latest_policy.active_status else None,
+            "premium_amount": float(latest_policy.premium_amount or 0) if latest_policy else 0.0,
+        })
+
+    return {
+        "claims": [schemas.ClaimResponse.model_validate(c) for c in claims],
+        "summary": {
+            "active_shifts": active_shift_count,
+            "approved_payout_total": approved_payout_total,
+            "total_premium_collected": total_premium_collected,
+            "live_loss_ratio": live_loss_ratio,
+            "projected_claims_next_week": projected_claims_next_week,
+            "projected_payout_next_week": projected_payout_next_week,
+            "projected_loss_ratio": projected_loss_ratio,
+        },
+        "zone_exposure": zone_exposure,
+        "demo_workers": demo_workers,
+    }
 
 
 @app.get("/admin/agent-logs")
@@ -1784,6 +2198,7 @@ async def _simulate_event_prisma(
     prisma_db: Any,
 ):
     req.zone = _normalize_zone(req.zone)
+    simulated_weather = _set_simulated_weather(req.zone, req.event_type)
     if req.driver_id is not None:
         _authorize_user_scope(current_auth, req.driver_id)
 
@@ -1831,6 +2246,22 @@ async def _simulate_event_prisma(
             recent_hash_counts["same_ip_claims_1h"] > 2,
             recent_hash_counts["same_upi_claims_24h"] > 1,
         ])
+        same_device_claims_24h = recent_hash_counts["same_device_claims_24h"]
+        same_ip_claims_1h = recent_hash_counts["same_ip_claims_1h"]
+        same_upi_claims_24h = recent_hash_counts["same_upi_claims_24h"]
+        if req.fraud_test_mode:
+            same_device_claims_24h = req.fraud_device_claims if req.fraud_device_claims > 0 else 3
+            same_ip_claims_1h = req.fraud_ip_claims if req.fraud_ip_claims > 0 else 2
+            same_upi_claims_24h = req.fraud_upi_claims if req.fraud_upi_claims > 0 else 1
+            cluster_flagged = True
+
+        telemetry = _build_simulation_telemetry(
+            req,
+            zone_lat=zone_lat,
+            zone_lon=zone_lon,
+            geofence_distance_m=geofence_distance_m,
+            weather_snapshot=simulated_weather,
+        )
 
         frs1, frs2, frs3, status, explanation, _tx_id, _agent_logs, signal_breakdown = await asyncio.to_thread(
             evaluate_fraud_multipass,
@@ -1842,12 +2273,21 @@ async def _simulate_event_prisma(
             claim_count_this_week=weekly_claims,
             same_zone_claims_30min=recent_count,
             geofence_distance_m=geofence_distance_m,
-            same_device_claims_24h=recent_hash_counts["same_device_claims_24h"],
-            same_ip_claims_1h=recent_hash_counts["same_ip_claims_1h"],
-            same_upi_claims_24h=recent_hash_counts["same_upi_claims_24h"],
+            same_device_claims_24h=same_device_claims_24h,
+            same_ip_claims_1h=same_ip_claims_1h,
+            same_upi_claims_24h=same_upi_claims_24h,
             device_integrity_score=req.device_integrity_score,
             cluster_flagged=cluster_flagged,
+            telemetry=telemetry,
         )
+        if req.fraud_test_mode:
+            _agent_logs.insert(0, {
+                "step": "FRAUD_TEST_MODE",
+                "message": (
+                    f"Demo fraud signals injected: device={same_device_claims_24h}, "
+                    f"ip={same_ip_claims_1h}, upi={same_upi_claims_24h}, GPS stale/speed/continuity anomalies active."
+                ),
+            })
         fraud_alert_triggered = status in ("Hold", "Rejected")
 
         if status == "Approved" and await check_zone_payout_cap_prisma(
@@ -1906,6 +2346,8 @@ async def _simulate_event_prisma(
         "message": f"Simulated '{req.event_type}' in {req.zone}.",
         "driverId": requested_driver_id,
         "location": req.location.model_dump() if req.location else None,
+        "weather": simulated_weather,
+        "disruptionHours": simulated_weather.get("disruption_hours", 0.0),
         "policies": len(active_policies),
         "processed": processed,
     }
@@ -1943,6 +2385,26 @@ class EventTriggerRequest(BaseModel):
         default=0.0,
         validation_alias=AliasChoices("device_integrity_score", "deviceIntegrityScore"),
     )
+    fraud_test_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("fraud_test_mode", "fraudTestMode"),
+        description="Enable fraud test mode to inject fraud signals (device collision, cluster flagging, etc.)"
+    )
+    fraud_device_claims: int = Field(
+        default=0,
+        validation_alias=AliasChoices("fraud_device_claims", "fraudDeviceClaims"),
+        description="Override same_device_claims_24h for fraud testing"
+    )
+    fraud_ip_claims: int = Field(
+        default=0,
+        validation_alias=AliasChoices("fraud_ip_claims", "fraudIpClaims"),
+        description="Override same_ip_claims_1h for fraud testing"
+    )
+    fraud_upi_claims: int = Field(
+        default=0,
+        validation_alias=AliasChoices("fraud_upi_claims", "fraudUpiClaims"),
+        description="Override same_upi_claims_24h for fraud testing"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1963,6 +2425,7 @@ async def simulate_event(
         return await _simulate_event_prisma(req, request, db, current_auth, prisma_db)
 
     req.zone = _normalize_zone(req.zone)
+    simulated_weather = _set_simulated_weather(req.zone, req.event_type)
     if req.driver_id is not None:
         _authorize_user_scope(current_auth, req.driver_id)
 
@@ -2028,6 +2491,25 @@ async def simulate_event(
             recent_hash_counts["same_upi_claims_24h"] > 1,
         ])
 
+        # Apply fraud test mode overrides if enabled
+        same_device_claims_24h = recent_hash_counts["same_device_claims_24h"]
+        same_ip_claims_1h = recent_hash_counts["same_ip_claims_1h"]
+        same_upi_claims_24h = recent_hash_counts["same_upi_claims_24h"]
+        
+        if req.fraud_test_mode:
+            same_device_claims_24h = req.fraud_device_claims if req.fraud_device_claims > 0 else 3
+            same_ip_claims_1h = req.fraud_ip_claims if req.fraud_ip_claims > 0 else 2
+            same_upi_claims_24h = req.fraud_upi_claims if req.fraud_upi_claims > 0 else 1
+            cluster_flagged = True
+
+        telemetry = _build_simulation_telemetry(
+            req,
+            zone_lat=zone_lat,
+            zone_lon=zone_lon,
+            geofence_distance_m=geofence_distance_m,
+            weather_snapshot=simulated_weather,
+        )
+
         frs1, frs2, frs3, status, explanation, tx_id, agent_logs, signal_breakdown = await asyncio.to_thread(
             evaluate_fraud_multipass,
             zone=req.zone,
@@ -2038,13 +2520,24 @@ async def simulate_event(
             claim_count_this_week=weekly_claims,
             same_zone_claims_30min=recent_count,
             geofence_distance_m=geofence_distance_m,
-            same_device_claims_24h=recent_hash_counts["same_device_claims_24h"],
-            same_ip_claims_1h=recent_hash_counts["same_ip_claims_1h"],
-            same_upi_claims_24h=recent_hash_counts["same_upi_claims_24h"],
+            same_device_claims_24h=same_device_claims_24h,
+            same_ip_claims_1h=same_ip_claims_1h,
+            same_upi_claims_24h=same_upi_claims_24h,
             device_integrity_score=req.device_integrity_score,
             cluster_flagged=cluster_flagged,
+            telemetry=telemetry,
         )
         fraud_alert_triggered = status in ("Hold", "Rejected")
+
+        # Add fraud test mode annotation to agent logs if enabled
+        if req.fraud_test_mode:
+            agent_logs.insert(0, {
+                "step": "FRAUD_TEST_MODE",
+                "message": (
+                    f"Demo fraud signals injected: device={same_device_claims_24h}, "
+                    f"ip={same_ip_claims_1h}, upi={same_upi_claims_24h}, GPS stale/speed/continuity anomalies active."
+                ),
+            })
 
         if status == "Approved" and _check_zone_payout_cap(
             req.zone,
@@ -2076,7 +2569,7 @@ async def simulate_event(
             frs_event=signal_breakdown["frs_event"],
             explanation=explanation,
             status=status,
-            rain_mm_at_trigger=None,
+            rain_mm_at_trigger=simulated_weather.get("rain_mm_per_hr"),
             aqi_at_trigger=None,
             driver_lat=req.location.lat if req.location else None,
             driver_lon=req.location.lon if req.location else None,
@@ -2121,6 +2614,7 @@ async def simulate_event(
                 "status": status,
                 "token_id": claim.token_id,
                 "request_id": getattr(request.state, "request_id", None),
+                "weather": simulated_weather,
             },
         )
         metric_events.append((status, fraud_alert_triggered))
@@ -2144,6 +2638,8 @@ async def simulate_event(
         "message":   f"Simulated '{req.event_type}' in {req.zone}.",
         "driverId": requested_driver_id,
         "location": req.location.model_dump() if req.location else None,
+        "weather": simulated_weather,
+        "disruptionHours": simulated_weather.get("disruption_hours", 0.0),
         "policies":  len(active_policies),
         "processed": processed,
     }

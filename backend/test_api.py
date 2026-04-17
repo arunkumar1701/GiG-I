@@ -171,8 +171,16 @@ def test_api_register_quote_policy_event_wallet_and_ledger(monkeypatch, tmp_path
     dashboard = client.get(f'/user/{user_id}/dashboard', headers=user_headers)
     assert dashboard.status_code == 200
     assert dashboard.json()['claims'][0]['data_hash']
+    assert dashboard.json()['demo_pricing']['trust_score'] == 90
+    assert dashboard.json()['latest_fraud_risk'] == 0.08
 
     admin_headers = _login_admin(client)
+    admin_dashboard = client.get('/admin/dashboard', headers=admin_headers)
+    assert admin_dashboard.status_code == 200
+    assert 'summary' in admin_dashboard.json()
+    assert 'zone_exposure' in admin_dashboard.json()
+    assert 'demo_workers' in admin_dashboard.json()
+
     ledger = client.get('/ledger', headers=admin_headers)
     assert ledger.status_code == 200
     ledger_entry = ledger.json()['entries'][0]
