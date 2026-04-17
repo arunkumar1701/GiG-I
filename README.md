@@ -331,7 +331,7 @@ The system is cloud-agnostic. In production, each component can run in container
 *   **Backend:** Node.js + FastAPI (Python)
 *   **ML:** Scikit-learn, XGBoost, Prophet
 *   **DB:** PostgreSQL (Prisma ORM)
-*   **Security:** JWT, SHA-256, TLS 1.3, AES-256
+*   **Security & Auth:** JWT, SHA-256, TLS 1.3, AES-256, **Firebase Auth (for OTP Verification)**
 *   **APIs:** OpenWeatherMap, WAQI, TomTom Traffic
 *   **Payments:** Razorpay (Sandbox Simulation)
 
@@ -369,3 +369,8 @@ We performed rigorous performance and end-to-end testing to ensure system stabil
 
 ## 26. Model Data Set Training Link
 *   **Model Data Set Training Link:** [Link to Model Data Set Training / Kaggle / HuggingFace]
+
+## 27. Admin Credentials
+To access the GiG-I Admin Dashboard and view the fraud simulation interface, use the following credentials:
+*   **Admin ID:** `gigi_ops`
+*   **Password:** `VeryStrongAdminPass!234`
