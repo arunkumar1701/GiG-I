@@ -1,6 +1,6 @@
 """
 models.py — GiG-I SQLAlchemy ORM Models
-Updated for Phase 2 MVP: individual FRS signal scores, real telemetry fields, admin review.
+Updated for Phase 3: WorkerShift + TelemetryPing tables for real GPS tracking.
 """
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
@@ -38,6 +38,7 @@ class User(Base):
     emergency_contact_encrypted = Column(String, nullable=True)
 
     policies = relationship("Policy", back_populates="user")
+    shifts   = relationship("WorkerShift", back_populates="user")
 
 
 class Policy(Base):
@@ -68,7 +69,7 @@ class Claim(Base):
     frs2          = Column(Float, nullable=True)
     frs3          = Column(Float, nullable=True)
 
-    # Individual signal breakdown (NEW — replaces opaque random values)
+    # Individual signal breakdown
     frs_location  = Column(Float, nullable=True)   # Location / trigger authenticity
     frs_device    = Column(Float, nullable=True)   # Device / claim frequency signal
     frs_behavior  = Column(Float, nullable=True)   # Payout-to-income ratio
@@ -86,6 +87,15 @@ class Claim(Base):
     token_id           = Column(Integer, nullable=True, index=True)
     cluster_flagged    = Column(Boolean, default=False)
 
+    # Telemetry evidence signals (Phase 3)
+    shift_id                 = Column(Integer, ForeignKey("worker_shifts.id"), nullable=True)
+    telemetry_continuity     = Column(Float, nullable=True)  # 0-1, low = suspicious
+    telemetry_speed_risk     = Column(Float, nullable=True)  # 0-1, high = spoofing
+    telemetry_gps_stale      = Column(Float, nullable=True)  # 0-1, high = GPS vanished
+    telemetry_accuracy_risk  = Column(Float, nullable=True)  # 0-1, high = poor accuracy
+    telemetry_distance_km    = Column(Float, nullable=True)  # km traveled during shift
+    telemetry_ping_count     = Column(Integer, nullable=True)
+
     # Decision fields
     explanation    = Column(String, nullable=True)
     status         = Column(String, default="Pending")
@@ -97,6 +107,49 @@ class Claim(Base):
     review_notes      = Column(String, nullable=True)
 
     policy = relationship("Policy", back_populates="claims")
+    shift  = relationship("WorkerShift", back_populates="claims")
+
+
+class WorkerShift(Base):
+    """
+    Tracks each discrete on-shift session for a worker.
+    Created when worker taps 'Go Online', closed on 'Go Offline' or timeout.
+    """
+    __tablename__ = "worker_shifts"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), index=True)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow)
+    ended_at   = Column(DateTime, nullable=True)
+    is_active  = Column(Boolean, default=True)
+    # Snapshot of last known position (for claim filing)
+    last_lat   = Column(Float, nullable=True)
+    last_lon   = Column(Float, nullable=True)
+    last_ping_at = Column(DateTime, nullable=True)
+
+    user   = relationship("User", back_populates="shifts")
+    pings  = relationship("TelemetryPing", back_populates="shift")
+    claims = relationship("Claim", back_populates="shift")
+
+
+class TelemetryPing(Base):
+    """
+    One GPS ping from the worker's browser during an active shift.
+    Stored for fraud-signal computation at claim time.
+    """
+    __tablename__ = "telemetry_pings"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    shift_id    = Column(Integer, ForeignKey("worker_shifts.id"), index=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), index=True)
+    lat         = Column(Float, nullable=False)
+    lon         = Column(Float, nullable=False)
+    accuracy_m  = Column(Float, nullable=True)   # GPS accuracy in metres
+    speed_kmh   = Column(Float, nullable=True)   # Browser-reported speed
+    heading     = Column(Float, nullable=True)   # Degrees 0-360
+    timestamp   = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    shift = relationship("WorkerShift", back_populates="pings")
 
 
 class AgentLog(Base):

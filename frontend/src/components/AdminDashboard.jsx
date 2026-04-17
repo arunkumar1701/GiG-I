@@ -255,44 +255,113 @@ export default function AdminDashboard({ apiBase, authToken, embedded = false })
                       </div>
 
                       {expanded && (
-                        <div className="mt-4 grid gap-4 rounded-2xl border border-white/10 bg-black/20 p-4 md:grid-cols-2">
+                        <div className="mt-4 space-y-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                          {/* GPS Telemetry Evidence */}
                           <div>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Evidence</p>
-                            <div className="mt-3 space-y-2 text-xs text-slate-300">
-                              <p>Rain at trigger: {claim.rain_mm_at_trigger ?? '--'}</p>
-                              <p>AQI at trigger: {claim.aqi_at_trigger ?? '--'}</p>
-                              <p>Lat/Lon: {claim.driver_lat ?? '--'}, {claim.driver_lon ?? '--'}</p>
-                              <p>Cluster flagged: {claim.cluster_flagged ? 'Yes' : 'No'}</p>
+                            <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-cyan-400">
+                              📡 GPS Telemetry Evidence
+                            </p>
+                            <div className="grid gap-2">
+                              {[
+                                { label: 'GPS Continuity', key: 'telemetry_continuity', invert: true, desc: 'Higher = more continuous tracking (good)' },
+                                { label: 'Speed Anomaly', key: 'telemetry_speed_risk', invert: false, desc: '>0.9 = possible GPS spoofing' },
+                                { label: 'GPS Stale Risk', key: 'telemetry_gps_stale', invert: false, desc: '>0.8 = GPS vanished near trigger' },
+                                { label: 'Accuracy Risk', key: 'telemetry_accuracy_risk', invert: false, desc: '>0.8 = poor location accuracy' },
+                              ].map(({ label, key, invert, desc }) => {
+                                const raw = claim[key];
+                                if (raw == null) return null;
+                                const val = Number(raw);
+                                const riskVal = invert ? (1 - val) : val;
+                                const color = riskVal >= 0.75 ? 'bg-rose-500' : riskVal >= 0.4 ? 'bg-amber-400' : 'bg-emerald-400';
+                                return (
+                                  <div key={key}>
+                                    <div className="mb-1 flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                      <span>{label}</span>
+                                      <span className={riskVal >= 0.75 ? 'text-rose-400' : riskVal >= 0.4 ? 'text-amber-400' : 'text-emerald-400'}>
+                                        {val.toFixed(3)}
+                                      </span>
+                                    </div>
+                                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-950">
+                                      <div className={`h-full transition-all ${color}`} style={{ width: `${Math.min(riskVal * 100, 100)}%` }} />
+                                    </div>
+                                    <p className="mt-0.5 text-[9px] text-slate-600">{desc}</p>
+                                  </div>
+                                );
+                              })}
                             </div>
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Telemetry</p>
-                            <div className="mt-3 space-y-2 text-xs text-slate-300">
-                              {claim.transaction_id ? <p className="break-all">tx id: {claim.transaction_id}</p> : null}
-                              {claim.transaction_hash ? <p className="break-all">tx hash: {claim.transaction_hash}</p> : null}
-                              {claim.data_hash ? <p className="break-all">data hash: {claim.data_hash}</p> : null}
-                              {claim.device_hash ? <p className="break-all">device: {claim.device_hash}</p> : null}
+                            <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-300">
+                              <div className="rounded-lg bg-slate-800 p-2">
+                                <p className="text-[9px] font-bold uppercase text-slate-500">GPS Pings</p>
+                                <p className="font-bold text-white">{claim.telemetry_ping_count ?? '—'}</p>
+                              </div>
+                              <div className="rounded-lg bg-slate-800 p-2">
+                                <p className="text-[9px] font-bold uppercase text-slate-500">Distance</p>
+                                <p className="font-bold text-white">
+                                  {claim.telemetry_distance_km != null ? `${Number(claim.telemetry_distance_km).toFixed(2)} km` : '—'}
+                                </p>
+                              </div>
                             </div>
                           </div>
 
-                          {claim.status === 'Hold' && (
-                            <div className="md:col-span-2 flex gap-2 pt-2">
-                              <button
-                                onClick={() => handleReview(claim.id, 'Approve')}
-                                disabled={submittingId === claim.id}
-                                className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-950 disabled:opacity-50"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => handleReview(claim.id, 'Reject')}
-                                disabled={submittingId === claim.id}
-                                className="rounded-lg bg-rose-500 px-4 py-2 text-xs font-black uppercase tracking-widest text-white disabled:opacity-50"
-                              >
-                                Reject
-                              </button>
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Weather Evidence</p>
+                              <div className="mt-3 space-y-2 text-xs text-slate-300">
+                                <p>Rain at trigger: <span className="font-bold text-cyan-300">{claim.rain_mm_at_trigger ?? '--'} mm/hr</span></p>
+                                <p>AQI at trigger: <span className="font-bold text-cyan-300">{claim.aqi_at_trigger ?? '--'}</span></p>
+                                <p>Cluster flagged: <span className={claim.cluster_flagged ? 'font-bold text-rose-400' : 'text-slate-400'}>{claim.cluster_flagged ? 'Yes ⚠' : 'No'}</span></p>
+                              </div>
                             </div>
-                          )}
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Location</p>
+                              <div className="mt-3 space-y-2 text-xs text-slate-300">
+                                {claim.driver_lat && claim.driver_lon ? (
+                                  <>
+                                    <p>Lat: <span className="font-bold text-cyan-300">{Number(claim.driver_lat).toFixed(5)}</span></p>
+                                    <p>Lon: <span className="font-bold text-cyan-300">{Number(claim.driver_lon).toFixed(5)}</span></p>
+                                    <a
+                                      href={`https://www.openstreetmap.org/?mlat=${claim.driver_lat}&mlon=${claim.driver_lon}&zoom=14`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-block rounded-lg bg-blue-600 px-3 py-1 text-[10px] font-bold text-white hover:bg-blue-500"
+                                    >
+                                      View on Map ↗
+                                    </a>
+                                  </>
+                                ) : (
+                                  <p className="text-slate-500">No GPS coordinates recorded</p>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="md:col-span-2">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Chain & Device</p>
+                              <div className="mt-3 space-y-1 text-[10px] text-slate-400 break-all">
+                                {claim.transaction_id && <p>tx id: <span className="text-slate-300">{claim.transaction_id}</span></p>}
+                                {claim.data_hash && <p>data hash: <span className="text-slate-300">{claim.data_hash}</span></p>}
+                                {claim.device_hash && <p>device: <span className="text-slate-300">{claim.device_hash}</span></p>}
+                              </div>
+                            </div>
+
+                            {claim.status === 'Hold' && (
+                              <div className="md:col-span-2 flex gap-2 pt-2">
+                                <button
+                                  onClick={() => handleReview(claim.id, 'Approve')}
+                                  disabled={submittingId === claim.id}
+                                  className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-950 disabled:opacity-50"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => handleReview(claim.id, 'Reject')}
+                                  disabled={submittingId === claim.id}
+                                  className="rounded-lg bg-rose-500 px-4 py-2 text-xs font-black uppercase tracking-widest text-white disabled:opacity-50"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

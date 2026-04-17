@@ -12,7 +12,7 @@ function formatCurrency(value) {
 function buildWalletAddress(user, currentUserId) {
   const phoneSuffix = String(user?.phone || '').slice(-4) || '0000';
   const zone = (user?.zone || 'zone-a').replace(/\s+/g, '-').toLowerCase();
-  return `gigshield://${zone}/worker-${currentUserId || 'demo'}-${phoneSuffix}`;
+  return `gig-i://${zone}/worker-${currentUserId || 'demo'}-${phoneSuffix}`;
 }
 
 export default function WalletView({ user, currentUserId, walletBalance, claims, onWithdraw }) {
@@ -35,9 +35,9 @@ export default function WalletView({ user, currentUserId, walletBalance, claims,
   };
 
   const handleShare = async () => {
-    const text = `GigShield wallet: ${walletAddress}`;
+    const text = `Gig-I wallet: ${walletAddress}`;
     if (navigator.share) {
-      await navigator.share({ title: 'GigShield Wallet', text });
+      await navigator.share({ title: 'Gig-I Wallet', text });
     } else {
       await navigator.clipboard.writeText(text);
       setCopyMessage('Share text copied');

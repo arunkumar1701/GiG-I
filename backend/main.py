@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from typing import Any, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -35,6 +35,7 @@ from weather_service import get_weather, ZONE_COORDS
 from payout_service import initiate_payout
 from metrics_service import record_claim_metrics
 from otp_service import otp_service
+from telemetry_risk import build_telemetry_evidence
 from prisma_client import (
     connect_prisma,
     disconnect_prisma,
@@ -130,7 +131,35 @@ def _ensure_runtime_schema() -> None:
 
 
 if not prisma_enabled():
+    models.Base.metadata.create_all(bind=engine)
     _ensure_runtime_schema()
+
+
+def _backfill_phase3_schema() -> None:
+    """Add Phase-3 columns (shift/telemetry) to existing SQLite DBs."""
+    if prisma_enabled():
+        return
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        tables = inspector.get_table_names()
+        # worker_shifts and telemetry_pings are created by SQLAlchemy if not exist
+        if "claims" in tables:
+            existing = {c["name"] for c in inspector.get_columns("claims")}
+            additions = {
+                "shift_id": "INTEGER",
+                "telemetry_continuity": "FLOAT",
+                "telemetry_speed_risk": "FLOAT",
+                "telemetry_gps_stale": "FLOAT",
+                "telemetry_accuracy_risk": "FLOAT",
+                "telemetry_distance_km": "FLOAT",
+                "telemetry_ping_count": "INTEGER",
+            }
+            for col, typ in additions.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE claims ADD COLUMN {col} {typ}"))
+
+
+_backfill_phase3_schema()
 
 # ---------------------------------------------------------------------------
 # Monitor State (shared across scheduler and API)
@@ -306,16 +335,15 @@ def _recent_claim_counts_for_hashes(
 
 def run_zone_monitor():
     """
-    Scheduled job: polls OpenWeatherMap for all zones every N minutes.
-    Automatically fires claims for active policies when an IMD threshold is breached.
-    This is the core of the 'automated monitoring system.'
+    Phase 3 upgrade: Only fires claims for workers with an ACTIVE shift.
+    GPS evidence is fetched from TelemetryPing table and fused into the ML score.
     """
     db: Session = SessionLocal()
     triggers_this_run = []
     metric_events: list[tuple[str, bool]] = []
 
     try:
-        logger.info("[Monitor] ⏱️  Starting zone weather check...")
+        logger.info("[Monitor] ⏱️  Starting zone weather check (shift-aware)...")
 
         for zone in ALL_ZONES:
             weather = get_weather(zone)
@@ -323,26 +351,40 @@ def run_zone_monitor():
             approved_this_run = 0
 
             if not trigger:
-                logger.info(f"[Monitor] {zone}: No trigger. Rain={weather['rain_mm_per_hr']}mm/hr, "
-                            f"Temp={weather['temp_c']}°C")
+                logger.info(f"[Monitor] {zone}: No trigger. Rain={weather['rain_mm_per_hr']}mm/hr")
                 continue
 
             logger.info(f"[Monitor] 🚨 TRIGGER DETECTED: {trigger} in {zone}")
             triggers_this_run.append({"zone": zone, "trigger": trigger})
 
-            # Find all active policies in this zone
-            users_in_zone = db.query(models.User).filter(models.User.zone == zone).all()
-            user_ids      = [u.id for u in users_in_zone]
+            # Phase 3: Only process workers with an ACTIVE shift in this zone
+            active_shifts = (
+                db.query(models.WorkerShift)
+                .join(models.User, models.WorkerShift.user_id == models.User.id)
+                .filter(
+                    models.User.zone == zone,
+                    models.WorkerShift.is_active == True,
+                )
+                .all()
+            )
+            logger.info(f"[Monitor] Found {len(active_shifts)} workers on active shift in {zone}.")
 
+            if not active_shifts:
+                continue
+
+            # All user IDs on shift
+            shift_user_ids = [s.user_id for s in active_shifts]
+
+            # Active policies for those on-shift workers
             active_policies = db.query(models.Policy).filter(
-                models.Policy.user_id.in_(user_ids),
+                models.Policy.user_id.in_(shift_user_ids),
                 models.Policy.active_status == True,
                 models.Policy.end_date >= datetime.datetime.utcnow()
             ).all()
 
-            logger.info(f"[Monitor] Found {len(active_policies)} active policies in {zone}.")
+            logger.info(f"[Monitor] {len(active_policies)} active policies for on-shift workers in {zone}.")
 
-            # Count claims in last 30 min from this zone (for network signal)
+            # Count claims in last 30 min from this zone (network signal)
             thirty_min_ago = datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
             policy_ids_zone = [p.id for p in active_policies]
             recent_claims_count = (
@@ -357,6 +399,26 @@ def run_zone_monitor():
                 if not user:
                     continue
 
+                # Get the worker's active shift and its pings
+                active_shift = next((s for s in active_shifts if s.user_id == user.id), None)
+                shift_pings = []
+                if active_shift:
+                    shift_pings = (
+                        db.query(models.TelemetryPing)
+                          .filter(models.TelemetryPing.shift_id == active_shift.id)
+                          .order_by(models.TelemetryPing.timestamp)
+                          .all()
+                    )
+
+                # Build GPS fraud evidence
+                telemetry_evidence = build_telemetry_evidence(active_shift, shift_pings)
+                logger.info(
+                    f"[Monitor] Worker {user.id} telemetry: "
+                    f"pings={telemetry_evidence['telemetry_ping_count']}, "
+                    f"continuity={telemetry_evidence['telemetry_continuity']:.2f}, "
+                    f"stale={telemetry_evidence['telemetry_gps_stale']:.2f}"
+                )
+
                 # Count this user's claims this week
                 week_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
                 user_weekly_claims = (
@@ -367,7 +429,7 @@ def run_zone_monitor():
                       .count()
                 )
 
-                payout_amount = round(float(policy.premium_amount) * 3.5, 2)  # Parametric payout ratio
+                payout_amount = round(float(policy.premium_amount) * 3.5, 2)
 
                 frs1, frs2, frs3, status, explanation, tx_id, agent_logs, signal_breakdown = \
                     evaluate_fraud_multipass(
@@ -378,13 +440,12 @@ def run_zone_monitor():
                         payout_amount=payout_amount,
                         claim_count_this_week=user_weekly_claims,
                         same_zone_claims_30min=recent_claims_count,
+                        telemetry=telemetry_evidence,
                     )
                 fraud_alert_triggered = status in ("Hold", "Rejected")
 
                 if status == "Approved" and _check_zone_payout_cap(
-                    zone,
-                    db,
-                    pending_approved=approved_this_run,
+                    zone, db, pending_approved=approved_this_run
                 ):
                     status = "Hold"
                     tx_id = None
@@ -394,7 +455,7 @@ def run_zone_monitor():
                     )
                     agent_logs.append({
                         "step": "ZONE_CAP",
-                        "message": f"Auto-ceiling applied in {zone}; payout held for manual review.",
+                        "message": f"Auto-ceiling applied in {zone}; payout held.",
                     })
 
                 claim = models.Claim(
@@ -413,7 +474,17 @@ def run_zone_monitor():
                     status=status,
                     transaction_id=tx_id,
                     rain_mm_at_trigger=weather.get("rain_mm_per_hr"),
-                    aqi_at_trigger=None,   # AQI fetched separately; can wire here
+                    aqi_at_trigger=None,
+                    # Phase 3 GPS evidence
+                    shift_id=active_shift.id if active_shift else None,
+                    driver_lat=active_shift.last_lat if active_shift else None,
+                    driver_lon=active_shift.last_lon if active_shift else None,
+                    telemetry_continuity=telemetry_evidence.get("telemetry_continuity"),
+                    telemetry_speed_risk=telemetry_evidence.get("telemetry_speed_risk"),
+                    telemetry_gps_stale=telemetry_evidence.get("telemetry_gps_stale"),
+                    telemetry_accuracy_risk=telemetry_evidence.get("telemetry_accuracy_risk"),
+                    telemetry_distance_km=telemetry_evidence.get("telemetry_distance_km"),
+                    telemetry_ping_count=telemetry_evidence.get("telemetry_ping_count"),
                 )
                 db.add(claim)
                 db.flush()
@@ -609,14 +680,33 @@ class LoginRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v):
+        if v is None: return v
+        from schemas import _validate_indian_mobile
+        return _validate_indian_mobile(v, "phone")
+
 
 class OtpRequest(BaseModel):
     phone: str
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v):
+        from schemas import _validate_indian_mobile
+        return _validate_indian_mobile(v, "phone")
 
 
 class OtpVerifyRequest(BaseModel):
     phone: str
     otp: str
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v):
+        from schemas import _validate_indian_mobile
+        return _validate_indian_mobile(v, "phone")
 
 
 class AdminOtpRequest(BaseModel):
@@ -853,6 +943,176 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         user_id=db_user.id,
         user=_serialize_user(db_user),
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Shift & GPS Telemetry Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/v1/shift/start", response_model=schemas.ShiftStatusResponse)
+def start_shift(req: schemas.ShiftStartRequest, db: Session = Depends(get_db),
+                current_auth: dict = Depends(get_auth_context)):
+    """Worker taps 'Go Online'. Creates a WorkerShift row and records first GPS ping."""
+    if current_auth.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin cannot start a worker shift")
+    user_id = current_auth["user_id"]
+
+    # Close any stale open shifts
+    stale = db.query(models.WorkerShift).filter(
+        models.WorkerShift.user_id == user_id,
+        models.WorkerShift.is_active == True,
+    ).all()
+    for s in stale:
+        s.is_active = False
+        s.ended_at = datetime.datetime.utcnow()
+
+    shift = models.WorkerShift(
+        user_id=user_id,
+        is_active=True,
+        last_lat=req.lat,
+        last_lon=req.lon,
+        last_ping_at=datetime.datetime.utcnow(),
+    )
+    db.add(shift)
+    db.flush()
+
+    # First ping
+    db.add(models.TelemetryPing(
+        shift_id=shift.id,
+        user_id=user_id,
+        lat=req.lat,
+        lon=req.lon,
+        accuracy_m=req.accuracy_m,
+    ))
+
+    # Update user shift_status
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if user:
+        user.shift_status = "Active"
+
+    db.commit()
+    db.refresh(shift)
+
+    ping_count = db.query(models.TelemetryPing).filter(models.TelemetryPing.shift_id == shift.id).count()
+    return schemas.ShiftStatusResponse(
+        shift_id=shift.id,
+        is_active=True,
+        started_at=shift.started_at,
+        last_ping_at=shift.last_ping_at,
+        ping_count=ping_count,
+        last_lat=shift.last_lat,
+        last_lon=shift.last_lon,
+    )
+
+
+@app.post("/api/v1/shift/ping", response_model=schemas.ShiftStatusResponse)
+def ping_shift(req: schemas.TelemetryPingRequest, db: Session = Depends(get_db),
+               current_auth: dict = Depends(get_auth_context)):
+    """Worker sends a GPS heartbeat during an active shift (every ~30 s)."""
+    if current_auth.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin cannot send shift pings")
+    user_id = current_auth["user_id"]
+
+    shift = db.query(models.WorkerShift).filter(
+        models.WorkerShift.user_id == user_id,
+        models.WorkerShift.is_active == True,
+    ).order_by(models.WorkerShift.started_at.desc()).first()
+
+    if not shift:
+        raise HTTPException(status_code=404, detail="No active shift found. Call /shift/start first.")
+
+    db.add(models.TelemetryPing(
+        shift_id=shift.id,
+        user_id=user_id,
+        lat=req.lat,
+        lon=req.lon,
+        accuracy_m=req.accuracy_m,
+        speed_kmh=req.speed_kmh,
+        heading=req.heading,
+    ))
+
+    # Update last known position on shift
+    shift.last_lat = req.lat
+    shift.last_lon = req.lon
+    shift.last_ping_at = datetime.datetime.utcnow()
+
+    db.commit()
+
+    ping_count = db.query(models.TelemetryPing).filter(models.TelemetryPing.shift_id == shift.id).count()
+    return schemas.ShiftStatusResponse(
+        shift_id=shift.id,
+        is_active=True,
+        started_at=shift.started_at,
+        last_ping_at=shift.last_ping_at,
+        ping_count=ping_count,
+        last_lat=shift.last_lat,
+        last_lon=shift.last_lon,
+    )
+
+
+@app.post("/api/v1/shift/end", response_model=schemas.ShiftStatusResponse)
+def end_shift(db: Session = Depends(get_db),
+              current_auth: dict = Depends(get_auth_context)):
+    """Worker taps 'Go Offline'. Closes the active shift."""
+    if current_auth.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin cannot end a worker shift")
+    user_id = current_auth["user_id"]
+
+    shift = db.query(models.WorkerShift).filter(
+        models.WorkerShift.user_id == user_id,
+        models.WorkerShift.is_active == True,
+    ).order_by(models.WorkerShift.started_at.desc()).first()
+
+    if not shift:
+        raise HTTPException(status_code=404, detail="No active shift to end.")
+
+    shift.is_active = False
+    shift.ended_at = datetime.datetime.utcnow()
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if user:
+        user.shift_status = "Offline"
+
+    db.commit()
+
+    ping_count = db.query(models.TelemetryPing).filter(models.TelemetryPing.shift_id == shift.id).count()
+    return schemas.ShiftStatusResponse(
+        shift_id=shift.id,
+        is_active=False,
+        started_at=shift.started_at,
+        last_ping_at=shift.last_ping_at,
+        ping_count=ping_count,
+        last_lat=shift.last_lat,
+        last_lon=shift.last_lon,
+    )
+
+
+@app.get("/api/v1/shift/status", response_model=schemas.ShiftStatusResponse)
+def get_shift_status(db: Session = Depends(get_db),
+                     current_auth: dict = Depends(get_auth_context)):
+    """Returns the worker's current shift status and last GPS position."""
+    if current_auth.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Use admin endpoints")
+    user_id = current_auth["user_id"]
+
+    shift = db.query(models.WorkerShift).filter(
+        models.WorkerShift.user_id == user_id,
+    ).order_by(models.WorkerShift.started_at.desc()).first()
+
+    if not shift:
+        return schemas.ShiftStatusResponse(is_active=False, ping_count=0)
+
+    ping_count = db.query(models.TelemetryPing).filter(models.TelemetryPing.shift_id == shift.id).count()
+    return schemas.ShiftStatusResponse(
+        shift_id=shift.id,
+        is_active=bool(shift.is_active),
+        started_at=shift.started_at,
+        last_ping_at=shift.last_ping_at,
+        ping_count=ping_count,
+        last_lat=shift.last_lat,
+        last_lon=shift.last_lon,
+    )
+
 
 
 @app.post("/token/refresh", response_model=schemas.AuthResponse)

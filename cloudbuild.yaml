@@ -1,0 +1,38 @@
+steps:
+  # Step 1 — Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -f
+      - backend/Dockerfile
+      - -t
+      - gcr.io/gig-i-a4fea/gig-i-backend:latest
+      - .
+
+  # Step 2 — Push image to Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - gcr.io/gig-i-a4fea/gig-i-backend:latest
+
+  # Step 3 — Deploy to Cloud Run with Cloud SQL + real credentials
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - gig-i-backend
+      - --image=gcr.io/gig-i-a4fea/gig-i-backend:latest
+      - --region=asia-south1
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8000
+      - --memory=512Mi
+      - --cpu=1
+      - --min-instances=0
+      - --max-instances=3
+      - --add-cloudsql-instances=gig-i-a4fea:asia-south1:gig-i-db
+      - --set-env-vars=APP_ENV=production,ENABLE_PRISMA=false,OTP_PROVIDER=firebase,OTP_DEMO_MODE=false,CORS_ALLOW_ORIGINS=https://gig-i-a4fea.web.app,JWT_SECRET=REDACTED,ADMIN_USERNAME=gigi_ops,ADMIN_PASSWORD=REDACTED,ADMIN_TOTP_SECRET=REDACTED,DATA_ENCRYPTION_KEY=REDACTED,CLOUD_SQL_CONNECTION_NAME=gig-i-a4fea:asia-south1:gig-i-db,DB_NAME=gig_i_prod,DB_USER=gig_i_user,DB_PASSWORD=REDACTED,OPENWEATHER_API_KEY=REDACTED,GEMINI_API_KEY=REDACTED,RAZORPAY_KEY_ID=REDACTED,RAZORPAY_KEY_SECRET=REDACTED,ENABLE_WEB3_PAYOUT=false
+
+images:
+  - gcr.io/gig-i-a4fea/gig-i-backend:latest

@@ -111,6 +111,7 @@ def evaluate_fraud_multipass(
     same_upi_claims_24h: int = 0,
     device_integrity_score: float = 0.0,
     cluster_flagged: bool = False,
+    telemetry: Optional[dict] = None,     # Phase 3: GPS evidence dict
     db_session=None,
 ) -> tuple:
     logs = [{"step": "INIT", "message": "Starting pure-ML README fraud evaluation pipeline."}]
@@ -136,6 +137,23 @@ def evaluate_fraud_multipass(
         logger.error("[AI Engine] Live context fetch failed: %s", exc)
         raise RuntimeError("Fraud pipeline requires live event context to score claims") from exc
 
+    telem = telemetry or {}
+    shift_active = telem.get("shift_active", None)  # None = unknown (legacy path)
+
+    # ── Hard Rule: No active shift = instant rejection ─────────────────────────
+    if shift_active is False:
+        hard_reject_explanation = (
+            "Auto-Rejected: No active GPS shift at trigger time. "
+            "Worker was not online when the weather event occurred. "
+            "Claims require an active shift with GPS consent."
+        )
+        logs.append({"step": "SHIFT_CHECK", "message": "No active shift — hard rejection applied."})
+        signal_breakdown = {
+            "frs_location": 1.0, "frs_device": 0.0,
+            "frs_behavior": 0.0, "frs_network": 0.0, "frs_event": 1.0,
+        }
+        return 1.0, 1.0, 1.0, "Rejected", hard_reject_explanation, None, logs, signal_breakdown
+
     ml_profile = predict_claim_fraud_profile(
         zone=zone,
         event_type=event_type,
@@ -154,6 +172,7 @@ def evaluate_fraud_multipass(
         temp_c=temp_c,
         event_match=event_match,
         trigger_present=trigger_present,
+        telemetry=telem,
     )
     logs.append(
         {
@@ -189,8 +208,54 @@ def evaluate_fraud_multipass(
         rain_mm=rain_mm,
         temp_c=temp_c,
         ml_context=ml_profile,
+        telemetry=telem,
     )
     logs.extend(tier3_logs)
+
+    # ── Hard-Rule Post-Model Signal Boosts ──────────────────────────────────────
+    # These rules override ML score upward when GPS evidence is unambiguous.
+    hard_boost = 0.0
+    hard_rule_notes = []
+
+    gps_stale = telem.get("telemetry_gps_stale", None)
+    speed_risk = telem.get("telemetry_speed_risk", None)
+    continuity = telem.get("telemetry_continuity", None)
+    ping_count = telem.get("telemetry_ping_count", None)
+
+    if gps_stale is not None and float(gps_stale) >= 0.8:
+        boost = 0.12
+        hard_boost += boost
+        hard_rule_notes.append(f"GPS stale risk={gps_stale:.2f} (+{boost} FRS boost: location presence unverified).")
+        logs.append({"step": "HARD_RULE_GPS_STALE", "message": hard_rule_notes[-1]})
+
+    if speed_risk is not None and float(speed_risk) >= 0.9:
+        boost = 0.15
+        hard_boost += boost
+        hard_rule_notes.append(f"Speed anomaly risk={speed_risk:.2f} (+{boost} FRS boost: GPS spoofing suspected).")
+        logs.append({"step": "HARD_RULE_SPEED", "message": hard_rule_notes[-1]})
+
+    if continuity is not None and float(continuity) < 0.2:
+        boost = 0.10
+        hard_boost += boost
+        hard_rule_notes.append(f"GPS continuity={continuity:.2f} (+{boost} FRS boost: large tracking gaps).")
+        logs.append({"step": "HARD_RULE_CONTINUITY", "message": hard_rule_notes[-1]})
+
+    if ping_count is not None and int(ping_count) == 0:
+        boost = 0.20
+        hard_boost += boost
+        hard_rule_notes.append(f"Zero GPS pings recorded (+{boost} FRS boost: no tracking evidence).")
+        logs.append({"step": "HARD_RULE_NO_PINGS", "message": hard_rule_notes[-1]})
+
+    if hard_boost > 0:
+        original_frs3 = frs3
+        frs3 = round(min(frs3 + hard_boost, 1.0), 3)
+        logs.append({
+            "step": "HARD_RULE_APPLIED",
+            "message": f"Hard rules boosted FRS from {original_frs3} to {frs3}. Rules: {'; '.join(hard_rule_notes)}"
+        })
+        if hard_rule_notes:
+            tier3_explanation = f"[GPS Evidence Flags] {' '.join(hard_rule_notes)} Original model score: {original_frs3}. " + tier3_explanation
+
     strong_signals = sum(1 for score in [sig_location, sig_device, sig_behavior, sig_network, sig_event] if score > 0.8)
 
     if frs3 > 0.85 and strong_signals >= 2:
@@ -249,6 +314,7 @@ def _run_gemini_tier3(
     rain_mm,
     temp_c,
     ml_context: Optional[dict] = None,
+    telemetry: Optional[dict] = None,
 ) -> tuple:
     logs = []
     ml_context = ml_context or {}
@@ -262,6 +328,20 @@ def _run_gemini_tier3(
         )
         logs.append({"step": "FRS3_AGENT", "message": f"Model-native Tier-3 FRS3={frs3}."})
         return frs3, explanation, logs
+
+    telem = telemetry or {}
+    telem_lines = ""
+    if telem:
+        telem_lines = f"""
+
+GPS TELEMETRY EVIDENCE:
+- Shift Active: {telem.get('shift_active', 'unknown')}
+- Ping Count: {telem.get('telemetry_ping_count', 'unknown')}
+- GPS Continuity Score: {telem.get('telemetry_continuity', 'unknown')} (1=continuous, 0=gap-filled)
+- Speed Anomaly Risk: {telem.get('telemetry_speed_risk', 'unknown')} (1=spoofing suspected)
+- GPS Stale Risk: {telem.get('telemetry_gps_stale', 'unknown')} (1=GPS disappeared)
+- Accuracy Risk: {telem.get('telemetry_accuracy_risk', 'unknown')} (1=very inaccurate)
+- Distance Traveled: {telem.get('telemetry_distance_km', 'unknown')} km"""
 
     prompt = f"""You are the Tier-3 explanation agent for GiG-I.
 
@@ -284,7 +364,7 @@ MODEL SIGNALS:
 - Network: {sig_network}
 - Tier-1 composite: {frs1}
 - Tier-2 composite: {frs2}
-- Graph risk: {graph_metrics.get('graph_risk', 0.0)}
+- Graph risk: {graph_metrics.get('graph_risk', 0.0)}{telem_lines}
 
 Respond ONLY with valid JSON:
 {{

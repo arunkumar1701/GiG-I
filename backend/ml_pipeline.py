@@ -148,6 +148,12 @@ FUSION_FEATURES = [
     "worker_risk_score",
     "predicted_loss_gap",
     "public_anomaly_index",
+    # Phase 3 — real GPS telemetry signals
+    "telemetry_continuity",
+    "telemetry_speed_risk",
+    "telemetry_gps_stale",
+    "telemetry_accuracy_risk",
+    "telemetry_distance_norm",
 ]
 
 _MODEL_BUNDLE: dict[str, Any] | None = None
@@ -498,6 +504,39 @@ def _build_training_frame(rows: int = 5000) -> tuple[pd.DataFrame, str]:
     )
     fraud_label = (fraud_score_target >= 0.58).astype(int)
 
+    # Telemetry signals (Phase 3) — genuine workers have continuous GPS with low speed anomaly
+    # Fraud pattern: stale GPS, high speed (spoofing), poor continuity, low accuracy
+    telemetry_continuity = np.clip(
+        np.where(public_label == 1,
+                 rng.beta(2.0, 6.0, rows),          # fraudsters: low continuity
+                 rng.beta(7.0, 2.0, rows)),          # legit: high continuity
+        0.0, 1.0
+    )
+    telemetry_speed_risk = np.clip(
+        np.where(public_label == 1,
+                 rng.beta(4.0, 3.0, rows),           # fraudsters: higher speed anomaly
+                 rng.beta(1.5, 8.0, rows)),           # legit: very low speed risk
+        0.0, 1.0
+    )
+    telemetry_gps_stale = np.clip(
+        np.where(public_label == 1,
+                 rng.beta(5.0, 2.0, rows),           # fraudsters: GPS often stale
+                 rng.beta(1.0, 7.0, rows)),           # legit: GPS fresh
+        0.0, 1.0
+    )
+    telemetry_accuracy_risk = np.clip(
+        np.where(public_label == 1,
+                 rng.beta(4.0, 3.0, rows),           # fraudsters: poor accuracy
+                 rng.beta(1.5, 6.0, rows)),           # legit: good accuracy
+        0.0, 1.0
+    )
+    telemetry_distance_norm = np.clip(
+        np.where(public_label == 1,
+                 rng.beta(1.5, 5.0, rows),           # fraudsters: barely moved
+                 rng.beta(4.0, 3.0, rows)),           # legit: actively traveling
+        0.0, 1.0
+    )
+
     frame = pd.DataFrame(
         {
             "zone_risk": zone_risk,
@@ -537,6 +576,12 @@ def _build_training_frame(rows: int = 5000) -> tuple[pd.DataFrame, str]:
             "network_signal_score": network_signal_score,
             "fraud_score_target": fraud_score_target,
             "fraud_label": fraud_label,
+            # Telemetry features
+            "telemetry_continuity": telemetry_continuity,
+            "telemetry_speed_risk": telemetry_speed_risk,
+            "telemetry_gps_stale": telemetry_gps_stale,
+            "telemetry_accuracy_risk": telemetry_accuracy_risk,
+            "telemetry_distance_norm": telemetry_distance_norm,
         }
     )
     return frame, dataset_source
@@ -794,6 +839,7 @@ def predict_claim_fraud_profile(
     trigger_present: float,
     platform: str = "Swiggy",
     vehicle_type: str = "Bike",
+    telemetry: dict | None = None,   # Phase 3: GPS evidence from build_telemetry_evidence()
 ) -> dict[str, Any]:
     bundle = get_model_bundle()
     _, graph_metrics = build_claim_graph(
@@ -861,17 +907,30 @@ def predict_claim_fraud_profile(
     behavior_signal = _bounded(float(bundle["behavior_model"].predict(behavior_frame)[0]))
     network_signal = _bounded(float(bundle["network_model"].predict(network_frame)[0]))
 
+    # Telemetry features — use provided evidence or safe defaults
+    telem = telemetry or {}
+    t_continuity   = float(telem.get("telemetry_continuity",    0.5))   # unknown = neutral
+    t_speed_risk   = float(telem.get("telemetry_speed_risk",    0.5))
+    t_gps_stale    = float(telem.get("telemetry_gps_stale",     0.5))
+    t_acc_risk     = float(telem.get("telemetry_accuracy_risk", 0.5))
+    t_dist_norm    = float(telem.get("telemetry_distance_norm", 0.3))
+
     fusion_frame = pd.DataFrame(
         [
             {
-                "event_signal_score": event_signal,
-                "location_signal_score": location_signal,
-                "device_signal_score": device_signal,
-                "behavior_signal_score": behavior_signal,
-                "network_signal_score": network_signal,
-                "worker_risk_score": pricing_profile["risk_score"],
-                "predicted_loss_gap": predicted_loss_gap,
-                "public_anomaly_index": base_features["public_anomaly_index"],
+                "event_signal_score":     event_signal,
+                "location_signal_score":  location_signal,
+                "device_signal_score":    device_signal,
+                "behavior_signal_score":  behavior_signal,
+                "network_signal_score":   network_signal,
+                "worker_risk_score":      pricing_profile["risk_score"],
+                "predicted_loss_gap":     predicted_loss_gap,
+                "public_anomaly_index":   base_features["public_anomaly_index"],
+                "telemetry_continuity":   t_continuity,
+                "telemetry_speed_risk":   t_speed_risk,
+                "telemetry_gps_stale":    t_gps_stale,
+                "telemetry_accuracy_risk":t_acc_risk,
+                "telemetry_distance_norm":t_dist_norm,
             }
         ]
     )
@@ -882,14 +941,15 @@ def predict_claim_fraud_profile(
         "predicted_income_loss": predicted_loss,
         "worker_risk_score": pricing_profile["risk_score"],
         "signal_scores": {
-            "event": event_signal,
+            "event":    event_signal,
             "location": location_signal,
-            "device": device_signal,
+            "device":   device_signal,
             "behavior": behavior_signal,
-            "network": network_signal,
+            "network":  network_signal,
         },
-        "graph_metrics": graph_metrics,
-        "dataset_source": bundle["dataset_source"],
-        "model_version": bundle["version"],
-        "metrics": bundle["metrics"],
+        "graph_metrics":    graph_metrics,
+        "dataset_source":   bundle["dataset_source"],
+        "model_version":    bundle["version"],
+        "metrics":          bundle["metrics"],
+        "telemetry_used":   telem,
     }

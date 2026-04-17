@@ -14,7 +14,7 @@ export default function LandingPage({ onLoginClick }) {
           </div>
 
           <h1 className="mt-6 text-6xl font-bold leading-none text-slate-900 md:text-7xl">
-            GigShield
+            Gig-I
           </h1>
           <p className="mt-4 text-lg font-medium leading-8 text-slate-600 md:text-xl">
             A delivery-partner-first protection app that prices risk, verifies disruption events, and updates wallet payouts in minutes.
@@ -42,9 +42,9 @@ export default function LandingPage({ onLoginClick }) {
             <div className="mx-auto mb-5 inline-flex rounded-full border border-[#efe6da] bg-white/85 px-4 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-[#26457d]">
               Premium protection
             </div>
-            <h2 className="text-center text-5xl font-bold text-slate-900">GigShield</h2>
+            <h2 className="text-center text-5xl font-bold text-slate-900">Gig-I</h2>
             <p className="mt-2 text-center text-sm font-medium text-slate-500">
-              Parametric income protection for India&apos;s delivery workforce
+              Parametric income protection for India&#39;s gig workforce
             </p>
 
             <div className="my-8 flex justify-center">

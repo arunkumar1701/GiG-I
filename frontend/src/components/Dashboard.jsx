@@ -110,7 +110,8 @@ export default function Dashboard({
       <TelematicsTracker
         user={{ ...user, shift_status: shiftStatus }}
         activePolicy={activePolicy}
-        onShiftChange={handleShiftChange}
+        onShiftChange={(next) => setShiftStatus(next)}
+        token={authToken}
       />
 
       <div className="grid grid-cols-2 gap-3">

@@ -22,3 +22,5 @@ xgboost
 joblib
 networkx
 pytest
+cloud-sql-python-connector[pg8000]
+pg8000

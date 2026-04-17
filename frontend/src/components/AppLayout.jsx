@@ -30,7 +30,7 @@ export default function AppLayout({ children, activeTab, setActiveTab, isCovered
                   <ShieldCheck className="h-5 w-5 text-[#26457d]" />
                 </div>
                 <div>
-                  <p className="text-xl font-bold text-slate-900">GigShield</p>
+                  <p className="text-xl font-bold text-slate-900">Gig-I</p>
                   <p className="text-[11px] font-semibold text-slate-500">{user?.zone || 'Worker wallet'}</p>
                 </div>
               </div>

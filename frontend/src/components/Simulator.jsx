@@ -50,7 +50,7 @@ export default function Simulator({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'gigshield-simulation.csv';
+    link.download = 'gig-i-simulation.csv';
     link.click();
     URL.revokeObjectURL(url);
   };

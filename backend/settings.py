@@ -159,48 +159,47 @@ class Settings:
         if not self.is_production:
             return
 
+        import os as _os
+        # DB: DB_URL OR Cloud SQL connector (no DB_URL needed on Cloud Run)
+        cloud_sql_conn = _os.environ.get("CLOUD_SQL_CONNECTION_NAME", "")
         required = {
-            "DB_URL": self.database_url,
             "JWT_SECRET": self.jwt_secret,
             "ADMIN_USERNAME": self.admin_username,
             "ADMIN_PASSWORD": self.admin_password,
             "ADMIN_TOTP_SECRET": self.admin_totp_secret,
             "DATA_ENCRYPTION_KEY": self.data_encryption_key,
             "OPENWEATHER_API_KEY": self.openweather_api_key,
-            "DATAGOV_API_KEY": self.datagov_api_key,
             "GEMINI_API_KEY": self.gemini_api_key,
             "RAZORPAY_KEY_ID": self.razorpay_key_id,
             "RAZORPAY_KEY_SECRET": self.razorpay_key_secret,
-            "REDIS_URL": self.redis_url,
         }
-        if self.otp_provider == "demo":
-            raise RuntimeError("OTP_PROVIDER cannot be demo in production")
+        # Require a DB source (either URL or Cloud SQL socket)
+        if not self.database_url and not cloud_sql_conn:
+            required["DB_URL_or_CLOUD_SQL_CONNECTION_NAME"] = ""
+        # OTP: "demo" or "firebase" are allowed — Firebase Phone Auth handles
+        # worker SMS on the frontend; backend OTP is only for admin TOTP.
         if self.otp_provider == "fast2sms":
-            required.update(
-                {
-                    "FAST2SMS_API_KEY": self.fast2sms_api_key,
-                    "FAST2SMS_SENDER_ID": self.fast2sms_sender_id,
-                    "FAST2SMS_TEMPLATE_ID": self.fast2sms_template_id,
-                    "ADMIN_PHONE_NUMBER": self.admin_phone_number,
-                }
-            )
+            required.update({
+                "FAST2SMS_API_KEY": self.fast2sms_api_key,
+                "FAST2SMS_SENDER_ID": self.fast2sms_sender_id,
+                "FAST2SMS_TEMPLATE_ID": self.fast2sms_template_id,
+                "ADMIN_PHONE_NUMBER": self.admin_phone_number,
+            })
         elif self.otp_provider == "twilio":
-            required.update(
-                {
-                    "TWILIO_ACCOUNT_SID": self.twilio_account_sid,
-                    "TWILIO_AUTH_TOKEN": self.twilio_auth_token,
-                    "TWILIO_VERIFY_SERVICE_SID": self.twilio_verify_service_sid,
-                    "ADMIN_PHONE_NUMBER": self.admin_phone_number,
-                }
-            )
-        elif self.otp_provider != "demo":
-            raise RuntimeError("OTP_PROVIDER must be one of: demo, fast2sms, twilio")
+            required.update({
+                "TWILIO_ACCOUNT_SID": self.twilio_account_sid,
+                "TWILIO_AUTH_TOKEN": self.twilio_auth_token,
+                "TWILIO_VERIFY_SERVICE_SID": self.twilio_verify_service_sid,
+                "ADMIN_PHONE_NUMBER": self.admin_phone_number,
+            })
+        elif self.otp_provider not in ("demo", "firebase"):
+            raise RuntimeError("OTP_PROVIDER must be one of: demo, firebase, fast2sms, twilio")
         if self.enable_web3_payout:
             required.update(
                 {
                     "WEB3_RPC_URL": self.web3_rpc_url,
                     "PRIVATE_KEY": self.web3_private_key,
-                    "GIGSHIELD_TOKEN_ADDRESS": self.web3_token_contract,
+                    "GIG_I_TOKEN_ADDRESS": self.web3_token_contract,
                 }
             )
 
@@ -216,51 +215,24 @@ class Settings:
             "ADMIN_USERNAME": {"gigadmin", "admin"},
             "ADMIN_PASSWORD": {"admin123!secure", "changeme"},
             "ADMIN_TOTP_SECRET": {"jbswy3dpehpk3pxp", "changeme"},
-            "DATAGOV_API_KEY": {"placeholder_optional", "changeme"},
-            "OPENWEATHER_API_KEY": {"changeme"},
-            "GEMINI_API_KEY": {"changeme"},
-            "RAZORPAY_KEY_ID": {"changeme"},
-            "RAZORPAY_KEY_SECRET": {"changeme", "placeholder_secret"},
+            "OPENWEATHER_API_KEY": {"changeme", "demo"},
+            "GEMINI_API_KEY": {"changeme", "demo"},
+            "RAZORPAY_KEY_ID": {"changeme", "demo"},
+            "RAZORPAY_KEY_SECRET": {"changeme", "placeholder_secret", "demo"},
             "DATA_ENCRYPTION_KEY": {"changeme"},
-            "PRIVATE_KEY": {"changeme", "replace-with-private-key"},
-            "GIGSHIELD_TOKEN_ADDRESS": {"changeme", "0x0000000000000000000000000000000000000000"},
-            "WEB3_RPC_URL": {"changeme", "https://example-rpc-url"},
         }
         normalized_values = {
             "JWT_SECRET": self.jwt_secret.strip().lower(),
             "ADMIN_USERNAME": self.admin_username.strip().lower(),
             "ADMIN_PASSWORD": self.admin_password.strip().lower(),
             "ADMIN_TOTP_SECRET": self.admin_totp_secret.strip().lower(),
-            "DATAGOV_API_KEY": self.datagov_api_key.strip().lower(),
             "OPENWEATHER_API_KEY": self.openweather_api_key.strip().lower(),
             "GEMINI_API_KEY": self.gemini_api_key.strip().lower(),
             "RAZORPAY_KEY_ID": self.razorpay_key_id.strip().lower(),
             "RAZORPAY_KEY_SECRET": self.razorpay_key_secret.strip().lower(),
             "DATA_ENCRYPTION_KEY": self.data_encryption_key.strip().lower(),
-            "FAST2SMS_API_KEY": self.fast2sms_api_key.strip().lower(),
-            "FAST2SMS_SENDER_ID": self.fast2sms_sender_id.strip().lower(),
-            "FAST2SMS_TEMPLATE_ID": self.fast2sms_template_id.strip().lower(),
-            "TWILIO_ACCOUNT_SID": self.twilio_account_sid.strip().lower(),
-            "TWILIO_AUTH_TOKEN": self.twilio_auth_token.strip().lower(),
-            "TWILIO_VERIFY_SERVICE_SID": self.twilio_verify_service_sid.strip().lower(),
-            "ADMIN_PHONE_NUMBER": self.admin_phone_number.strip().lower(),
-            "PRIVATE_KEY": self.web3_private_key.strip().lower(),
-            "GIGSHIELD_TOKEN_ADDRESS": self.web3_token_contract.strip().lower(),
-            "WEB3_RPC_URL": self.web3_rpc_url.strip().lower(),
         }
-        if not self.enable_web3_payout:
-            normalized_values.pop("PRIVATE_KEY", None)
-            normalized_values.pop("GIGSHIELD_TOKEN_ADDRESS", None)
-            normalized_values.pop("WEB3_RPC_URL", None)
-        if self.otp_provider != "fast2sms":
-            normalized_values.pop("FAST2SMS_API_KEY", None)
-            normalized_values.pop("FAST2SMS_SENDER_ID", None)
-            normalized_values.pop("FAST2SMS_TEMPLATE_ID", None)
-        if self.otp_provider != "twilio":
-            normalized_values.pop("TWILIO_ACCOUNT_SID", None)
-            normalized_values.pop("TWILIO_AUTH_TOKEN", None)
-            normalized_values.pop("TWILIO_VERIFY_SERVICE_SID", None)
-        if self.otp_provider == "demo":
+        if self.otp_provider not in ("demo", "firebase"):
             normalized_values.pop("ADMIN_PHONE_NUMBER", None)
         weak = [
             name for name, value in normalized_values.items()
