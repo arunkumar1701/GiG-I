@@ -55,6 +55,12 @@ Aligned with the gig worker’s payout cycle:
 *   **Model:** Gradient Boosting Regression
 *   **Output:** Precise ₹ loss estimate during the disruption window.
 
+### 7.3 Model Training & Data Set
+Our machine learning pipeline uses a hybrid data strategy to bootstrap the fraud defense systems:
+*   **Base Dataset:** We utilize public, anonymized financial anomaly datasets (like OpenML Credit Card Fraud subsets) to anchor the models on proven statistical signatures of transaction fraud.
+*   **Gig-Economy Synthetic Augmentation:** Since localized parametric data is highly scarce, we synthetically expand upon the fraud seed. Using Monte Carlo methods, we simulate thousands of Indian gig-worker scenarios encompassing delivery zones, vehicle models (EV, Bike), environmental factors (weather intensity, AQI severity), and simulated adversarial telemetry (GPS drift, stale signals, and coordinated IP/Device ring sharing).
+*   **Training Methodology:** We apply an 80/20 train-test split over this augmented dataset. We independently train five specialized **XGBoost** regressors for the various signals (Event, Location, Device, Behavior, Network). The results are fed into a definitive **XGBoost Fusion Model** that calculates the final multi-dimensional Fraud Risk Score (FRS).
+
 ## 8. Adversarial Defense & Anti-Spoofing Strategy
 ### The Problem Scenario
 *“500 fake GPS claims attempt to drain the payout pool during a legitimate rain event.”* Simple GPS validation is insufficient against sophisticated attackers.
